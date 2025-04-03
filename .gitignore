@@ -1,0 +1,5 @@
+.vagrant
+quick-*.sh
+*.out
+*.dat
+*.txt
