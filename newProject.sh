@@ -8,11 +8,10 @@ cd `dirname $0`
 DIR="${HOME}/src/$1"
 
 mkdir -p "$DIR"
-cp make_build_script.sh setup.sh *.ino "${DIR}/${1}.ino"
-cp mpub Makefile "$DIR"
+cp make_build_script.sh setup.sh *.ino .gitignore mpub Makefile "${DIR}"
 cd "$DIR"
 git init
-git add *
+git add .gitignore *
 git commit -m "Initial commit"
 git config push.autoSetupRemote true
 gh repo create --source=. --public
