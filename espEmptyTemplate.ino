@@ -1,30 +1,31 @@
-#include <Adafruit_GFX.h>               // Core graphics library
-#include <Adafruit_ST7735.h>            // Hardware-specific library
+#include "jimlib.h"
+#ifndef CSIM
+#include "rom/uart.h"
+#endif
 
-#define TFT_CS 16
-#define TFT_RST 9  
-#define TFT_DC 17
-#define TFT_SCLK 5   
-#define TFT_MOSI 23  
-#define ST7735
-
-Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+JStuff j;
+CLI_VARIABLE_FLOAT(x, 800);
 
 void setup() {
-    pinMode(27,OUTPUT); 		//Backlight:27  TODO:JIM 27 appears to be an external pin 
-    digitalWrite(27,HIGH);		//New version added to backlight control
-    printf("%d\n", __LINE__); 
-    tft.initR(INITR_18GREENTAB);                             // 1.44 v2.1
-    printf("%d\n", __LINE__); 
-    tft.fillScreen(ST7735_BLACK);                            
-    tft.setTextColor(ST7735_YELLOW, ST7735_BLACK);          
-    tft.setRotation(1);
-    tft.setTextSize(2); 
+    j.begin();
+    j.cli.on("RESET", [](){ ESP.restart(); });
 }
 
 void loop() {
-    delay(100);
-    tft.setCursor(0, 0);
-    tft.print("HELLO");
-    printf("loop()\n");
+    j.run();
+    OUT("loop");
+    delay(5000);
 }
+
+#ifdef CSIM
+class Csim : public ESP32sim_Module {
+    public:
+    Csim() { HTTPClient::csim_onPOST("http://.*/log", 
+        [](const char *url, const char *hdr, const char *data, string &result) { return 200; }); }
+    string dummy;
+    void parseArg(char **&a, char **la) override { if (strcmp(*a, "--dummy") == 0) dummy = *(++a); }
+    void setup() override {}
+    void loop() override {}
+} csim;
+#endif
+ 

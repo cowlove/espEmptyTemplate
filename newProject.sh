@@ -8,7 +8,7 @@ cd `dirname $0`
 DIR="${HOME}/src/$1"
 
 mkdir -p "$DIR"
-cp *.ino "${DIR}/${1}.ino"
+cp make_build_script.sh setup.sh *.ino "${DIR}/${1}.ino"
 cp mpub Makefile "$DIR"
 cd "$DIR"
 git init

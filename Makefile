@@ -1,4 +1,4 @@
-BOARD=esp32
+BOARD=esp32s3
 #VERBOSE=1::
 CHIP=esp32
 OTA_ADDR=192.168.68.118
@@ -10,23 +10,35 @@ else
 	BUILD_EXTRA_FLAGS += -DI2S
 endif
 
-#GIT_VERSION := "$(shell git describe --abbrev=4 --dirty --always --tags)"
+GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always --tags)"
 BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
-BUILD_EXTRA_FLAGS += -DESP32CORE_V2
 include ${HOME}/Arduino/libraries/makeEspArduino/makeEspArduino.mk
 
 
 .PHONY: ${MAIN_NAME}_csim
+.PHONY: clibuild
+.PHOLY: quick-clibuild
+
+quick-${BOARD}.sh:
+	BOARD=${BOARD} ./make_build_script.sh
+clibuild: quick-${BOARD}.sh
+	BOARD=${BOARD} ./make_build_script.sh
+
+quick-clibuild: quick-${BOARD}.sh
+	./quick-${BOARD}.sh
 
 csim: ${MAIN_NAME}_csim
 	cp $< $@
 
+
+CSIM_INC=-I${HOME}/Arduino/libraries/ArduinoJson/src/ -I${HOME}/Arduino/libraries/Arduino_CRC32/src/ \
+	-I${HOME}/Arduino/libraries/esp32jimlib/src/ 
+
+CSIM_CPP=${HOME}/Arduino/libraries/Arduino_CRC32/src/* 	
+
 ${MAIN_NAME}_csim:  
-	g++ -x c++ -g ${MAIN_NAME}.ino -o $@ -DESP32 -DCSIM -DUBUNTU \
-	-I./ -I${HOME}/Arduino/lib -I ${HOME}/Arduino/libraries/esp32jimlib/src/ 
-
-
-csim:	${MAIN_NAME}_csim
+	g++ -g -O2 -x c++ -fpermissive ${MAIN_NAME}.ino -o $@ -DGIT_VERSION=\"${GIT_VERSION}\" -DESP32 -DCSIM -DUBUNTU \
+	-I./  ${CSIM_INC} ${CSIM_CPP}
 
 fixtty:
 	stty -F ${UPLOAD_PORT} -hupcl -crtscts -echo raw 115200

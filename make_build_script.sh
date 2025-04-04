@@ -1,20 +1,36 @@
-#!/bin/bash
-BOARD=ttgo-t1
-TMP=/tmp/arduino/$$.txt
-PORT=/dev/ttyUSB0
-BOARD_OPTS=PartitionScheme=min_spiffs
+#!/bin/bash 
+BOARD=${BOARD:=esp32s3}
 
-cd `dirname $0`
-arduino-cli compile  -v \
-    -b esp32:esp32:${BOARD} -u --port ${PORT} \
-	 | tee $TMP
+if [ "$BOARD" == "esp32" ]; then
+	BOARD_OPTS=${BOARD_OPTS:=PartitionScheme=min_spiffs}
+	PORT=${PORT:=/dev/ttyUSB0}
+fi 
+if [ "$BOARD" == "esp32c3" ] || [ $BOARD == "esp32c6" ] || [ "$BOARD" == "esp32s3" ]; then 
+	BOARD_OPTS=${BOARD_OPTS:=PartitionScheme=min_spiffs,CDCOnBoot=cdc}
+	PORT=${PORT:=/dev/ttyACM0}
+fi
 
-SKETCH=`basename \`pwd\``
-SKETCHDIR=/tmp/arduino/sketches/`rematch '/tmp/arduino/sketches/([A-Z0-9]+)/' $TMP | head -1`
+echo Building for ${BOARD}:${BOARD_OPTS} uploading to ${PORT}
+
+# As of 3/30 8:30am this is the best working version of make_build
+
+GIT_VERSION=`git describe --abbrev=8 --dirty --always --tags`
+
+cd "`dirname $0`"
+SKETCH="`basename \`pwd\``"
+BUILDDIR="/tmp/arduino/${SKETCH}/${BOARD}"
+mkdir -p ${BUILDDIR}
+TMP="/tmp/$$.txt"
+arduino-cli compile -v -b esp32:esp32:${BOARD} --build-path ${BUILDDIR} \
+  --board-options ${BOARD_OPTS} \
+  --build-property compiler.cpp.extra_flags="-DGIT_VERSION=\"${GIT_VERSION}\"" \
+   -u -p ${PORT}\
+	 | tee "$TMP"
+
+SKETCHDIR="$BUILDDIR"
 SKETCHCPP="${SKETCHDIR}/sketch/${SKETCH}.ino.cpp"
-OUT=./build-${BOARD}.sh
+OUT=./quick-${BOARD}.sh
 
-# TODO: this is missing a link command        
 COMPILE_CMD=`egrep "[-]o ${SKETCHCPP}.o" $TMP`
 LINK_CMD1=`egrep " cr ${SKETCHDIR}/sketch/objs.a" $TMP`
 LINK_CMD2=`egrep "[-]o ${SKETCHDIR}/${SKETCH}.ino.elf" $TMP`
@@ -44,18 +60,18 @@ fi
 
 if [[ \$OPT == *u* ]]; then
 	echo Uploading... 
-	if [[ \$OPT == *w* ]]; then echo -n Waiting for ${PORT}...; while [ ! -e ${PORT} ]; do sleep 1; done; echo OK; fi;
+	if [[ \$OPT == *w* ]]; then echo -n Waiting for ${PORT}...; while [ ! -e ${PORT} ]; do sleep .01; done; echo OK; fi;
 	$UPLOAD_CMD 
 fi
 
 if [[ \$OPT == *m* ]]; then
 	echo Monitoring...
-	if [[ \$OPT == *w* ]]; then echo -n Waiting for ${PORT}...; while [ ! -e ${PORT} ]; do sleep 1; done; echo OK; fi;
-	stty -F ${PORT} 115200 raw -echo && cat ${PORT}
+	if [[ \$OPT == *w* ]]; then echo -n Waiting for ${PORT}...; while [ ! -e ${PORT} ]; do sleep .01; done; echo OK; fi;
+	while sleep .01; do if [ -e ${PORT} ]; then stty -F ${PORT} 115200 raw -echo && cat ${PORT}; fi; done
 fi;
 
 
 END
 
 chmod 755 $OUT
-#rm -f $TMP
+rm -f $TMP
