@@ -4,3 +4,8 @@ quick-*.sh
 *.dat
 *.txt
 VagrantFile
+csim
+spiff
+*_csim
+build
+esp*.mk

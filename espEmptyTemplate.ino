@@ -1,4 +1,5 @@
 #include "jimlib.h"
+#include "serialLog.h"
 #ifndef CSIM
 #include "rom/uart.h"
 #endif
@@ -13,8 +14,8 @@ void setup() {
 
 void loop() {
     j.run();
-    OUT("loop");
-    delay(5000);
+    OUT("loop %f", (float)x);
+    delay(1000);
 }
 
 #ifdef CSIM
