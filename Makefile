@@ -4,7 +4,7 @@ PORT ?= /dev/ttyUSB0
 GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 EXTRA_CFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 SKETCH_NAME=$(shell basename `pwd`)
-BOARD_OPTIONS = PartitionScheme=min_spiffs,PSRAM=opi
+BOARD_OPTIONS = PartitionScheme=min_spiffs
 
 ifeq ($(BOARD),esp32s3)
 	BOARD_OPTIONS := ${BOARD_OPTIONS}
