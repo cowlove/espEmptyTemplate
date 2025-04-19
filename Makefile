@@ -25,9 +25,9 @@ include ${BOARD}.mk
 
 ${BOARD}.mk:
 	@echo Running arduino-cli compile --clean, this could take a while.  Upload failure is OK.
-	arduino-cli -v compile --clean --build-path ./build/${BOARD}/ \
+	time arduino-cli -v compile -j 4 --clean --build-path ./build/${BOARD}/ \
 		-b esp32:esp32:${BOARD} --board-options ${BOARD_OPTIONS} \
-		-u -p ${PORT} | bin/cli-parser.py > ${BOARD}.mk
+		-u -p ${PORT} | tee cli.out | bin/cli-parser.py > ${BOARD}.mk
 
 fixtty:
 	stty -F ${PORT} -hupcl -crtscts -echo raw 115200
