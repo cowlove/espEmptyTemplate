@@ -45,6 +45,8 @@ printf "Host *\n StrictHostKeyChecking no" >> ~/.ssh/config
 chmod 600 ~/.ssh/config
 
 git clone git@github.com:cowlove/esp32jimlib.git
+git clone git@github.com:cowlove/esp32csim.git
+
 
 cd ${HOME}
 SKETCH=$( echo `basename /vagrant/*.ino` | sed s/.ino// )
