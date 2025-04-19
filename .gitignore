@@ -9,3 +9,4 @@ spiff
 *_csim
 build
 esp*.mk
+Vagrantfile
