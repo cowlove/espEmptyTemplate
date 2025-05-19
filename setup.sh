@@ -46,6 +46,7 @@ chmod 600 ~/.ssh/config
 
 git clone git@github.com:cowlove/esp32jimlib.git
 git clone git@github.com:cowlove/esp32csim.git
+git clone git@github.com:cowlove/makeEspArduino.git
 
 
 cd ${HOME}
