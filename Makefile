@@ -11,26 +11,27 @@ CDC_ON_BOOT=1
 ifeq (${BOARD},esp32s3)
         CDC_ON_BOOT=1
         BUILD_MEMORY_TYPE=qio_opi
+	PORT ?= /dev/ttyACM0
 else
         BUILD_MEMORY_TYPE=qio_qspi
+	PORT ?= /dev/ttyUSB0
 endif
-
+UPLOAD_PORT ?= ${PORT}
 
 #BUILD_EXTRA_FLAGS += -DARDUINO_PARTITION_huge_app 
 BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" 
 	
 #sed  's|^\(.*/srmodels.bin\)|#\1|g' -i ~/.arduino15/packages/esp32/hardware/esp32/3.2.0/boards.txt  
 
-
-
-UPLOAD_PORT ?= /dev/ttyACM0
+csim-build:
+	${MAKE} BOARD=csim csim 
 
 ifeq ($(BOARD),csim)
 CSIM_BUILD_DIR=./build/csim
 CSIM_LIBS=Arduino_CRC32 ArduinoJson Adafruit_HX711 esp32jimlib
 include ${ALIBS}/esp32csim/csim.mk
 else
-	include ~/Arduino/libraries/makeEspArduino/makeEspArduino.mk
+include ~/Arduino/libraries/makeEspArduino/makeEspArduino.mk
 endif
 
 cat:    

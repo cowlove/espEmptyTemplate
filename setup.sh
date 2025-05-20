@@ -35,7 +35,7 @@ sed -i 's|additional_urls: \[\]|additional_urls: \[https://dl.espressif.com/dl/p
 arduino-cli update
 arduino-cli core install esp32:esp32
 arduino-cli lib install ArduinoOTA PubSubClient HTTPClient OneWireNg \
-	ArduinoJson Arduino_CRC32 "DHT sensor library"
+	ArduinoJson Arduino_CRC32 "DHT sensor library" "Adafruit HX711" 
 
 mkdir -p ${HOME}/Arduino/libraries 
 cd ${HOME}/Arduino/libraries 
@@ -55,7 +55,7 @@ SKETCH=$( echo `basename /vagrant/*.ino` | sed s/.ino// )
 git clone git@github.com:cowlove/${SKETCH}.git
 
 cd ${SKETCH}
-make uc
+make 
 
 # makeEspArduino needs needs a preferences.txt file 
 #echo sketchbook.path=${HOME}/Arduino >> ~/.arduino15/preferences.txt
