@@ -1,7 +1,6 @@
 #include "jimlib.h"
 #include "serialLog.h"
 #ifndef CSIM
-#include "rom/uart.h"
 #endif
 
 JStuff j;

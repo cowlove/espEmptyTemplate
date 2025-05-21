@@ -3,7 +3,7 @@ PORT ?= /dev/ttyACM0
 CHIP ?= esp32
 
 ALIBS=${HOME}/Arduino/libraries
-EXCLUDE_DIRS=${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim
+EXCLUDE_DIRS=${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim|${ALIBS}/PubSubClient/tests
 PART_FILE=${ESP_ROOT}/tools/partitions/min_spiffs.csv
 GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 
