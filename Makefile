@@ -10,6 +10,8 @@ GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 ifeq (${BOARD},esp32s3)
         CDC_ON_BOOT=1
         BUILD_MEMORY_TYPE=qio_opi
+		BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM 
+
 	PORT ?= /dev/ttyACM0
 else
         BUILD_MEMORY_TYPE=qio_qspi
@@ -17,7 +19,7 @@ else
 endif
 UPLOAD_PORT ?= ${PORT}
 
-BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" 
+BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" -O3
 	
 #sed  's|^\(.*/srmodels.bin\)|#\1|g' -i ~/.arduino15/packages/esp32/hardware/esp32/3.2.0/boards.txt  
 

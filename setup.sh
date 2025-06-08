@@ -2,7 +2,7 @@
 # on host machine:
 # sudo apt-get install vagrant apt-cacher-ng
 if [ ! -d /vagrant ]; then 
-	vagrant init ubuntu/jammy64
+	vagrant init debian/bookworm64
 	vagrant up
 	vagrant plugin list | grep vagrant-scp || vagrant plugin install vagrant-scp
 	vagrant ssh -c "mkdir -p bin/ .arduino15/"
@@ -14,7 +14,7 @@ fi
 
 # TODO: check if proxy is up/exists
 if [ -d /vagrant ]; then
-	echo 'Acquire::http { Proxy "http://10.0.2.3:3142"; };' | sudo tee /etc/apt/apt.conf.d/01proxy
+	echo 'Acquire::http { Proxy "http://10.0.2.2:3142"; };' | sudo tee /etc/apt/apt.conf.d/01proxy
 fi
 
 sudo usermod -a -G dialout vagrant
