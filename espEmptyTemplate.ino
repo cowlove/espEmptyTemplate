@@ -203,7 +203,6 @@ void IRAM_ATTR iloop_psram() {
 void IRAM_ATTR iloop_dram() {	
 	portDISABLE_INTERRUPTS();
 	ESP_INTR_DISABLE(XT_TIMER_INTNUM);
-	//ESP_INTR_ENABLE(XT_TIMER_INTNUM); 
 	while(1) { 
         //wdtReset();
         const uint32_t startUsec = micros();

@@ -7,14 +7,15 @@ EXCLUDE_DIRS=${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim|${ALIBS}/PubSub
 PART_FILE=${ESP_ROOT}/tools/partitions/min_spiffs.csv
 GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 
-ifeq (${BOARD},esp32s3)
-        CDC_ON_BOOT=1
-        BUILD_MEMORY_TYPE=qio_opi
-		BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM 
 
+ifeq (${BOARD},esp32s3)
+	# EventsCore=0,PSRAM=opi,CDCOnBoot=cdc
+	CDC_ON_BOOT=1
+	BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM 
+	BUILD_MEMORY_TYPE=qio_opi
 	PORT ?= /dev/ttyACM0
 else
-        BUILD_MEMORY_TYPE=qio_qspi
+	BUILD_MEMORY_TYPE=qio_qspi
 	PORT ?= /dev/ttyUSB0
 endif
 UPLOAD_PORT ?= ${PORT}
