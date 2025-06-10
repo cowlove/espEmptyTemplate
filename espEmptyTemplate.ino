@@ -49,7 +49,7 @@ uint32_t dramElapsedTsc;
 uint32_t lateTsc;
 int dramLoopCount = 0, psramLoopCount = 0;
 int lateCount = 0;
-int lateMax = 0, lateMin = 0, lateIndex = -1;
+int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
 
 // Callback function (optional)
@@ -68,9 +68,7 @@ void IRAM_ATTR threadFunc(void *) {
         .flags = 0
     };
     async_memcpy_handle_t handle = NULL;
-    if (esp_async_memcpy_install(&config, &handle) == ESP_OK) {
-        printf("Async memcpy driver installed successfully.\n");
-    } else {
+    if (esp_async_memcpy_install(&config, &handle) != ESP_OK) {
         printf("Failed to install async memcpy driver.\n");
         return;
     }
@@ -81,25 +79,29 @@ void IRAM_ATTR threadFunc(void *) {
             psramLoopCount++; 
             const uint32_t startUsec = micros();
             if (esp_async_memcpy(handle, (void *)(psram + pi), (void *)dram, dram_sz, 
-                async_memcpy_callback, NULL)) { 
-                printf("async ERR psramLoopCount %d/%d\n", psramLoopCount, psram_sz / dram_sz);
+                async_memcpy_callback, NULL) != ESP_OK) { 
+                printf("esp_asyn_memcpy() error, psramLoopCount %d/%d\n", psramLoopCount, psram_sz / dram_sz);
                 break;
             } 
             pi = pi + dram_sz / sizeof(uint32_t);
-            if (pi > (psram_sz - dram_sz * 2) / sizeof(uint32_t))
-                break;
+            if (pi > (psram_sz - dram_sz * 2) / sizeof(uint32_t)) {
+                pi = 0;
+                //break;
+            }
         }
         uint32_t ms = millis();
-        if (ms / 1000 != lastMs / 1000) {
+        if (ms / 5000 != lastMs / 5000) {
 			int lm = lateMax;
             int lmi = lateMin;
-			lateMax = lateMin = 0;
+			//lateMax = 0;
+            //lateMin = 99999;
             printf("cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dram %.5f %d\n", 
                 cbCount, lateCount, lateIndex, lmi, lm, lateTsc, dram_sz / 4.0 / dramElapsedTsc * 240, dramLoopCount);
             lastMs = ms;
-            lateIndex = -1;
+            //lateIndex = -1;
             //lateCount = 0;
-            lateTsc = 0 ;
+            //lateTsc = 0;
+            if (millis() > 5000) ESP.restart();
         }
         //delayMicroseconds(1);
     }
@@ -107,9 +109,9 @@ void IRAM_ATTR threadFunc(void *) {
     while(cbCount != psramLoopCount) delay(1);
     int lm = lateMax;
     int lmi = lateMin;
-    lateMax = lateMin = 0;
     printf("cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dram %.5f %d psramLoop %d\n", 
         cbCount, lateCount, lateIndex, lmi, lm, lateTsc, dram_sz / 4.0 / dramElapsedTsc * 240, dramLoopCount, psramLoopCount);
+    delay(100);
     ESP.restart();
 }
 
@@ -117,7 +119,7 @@ void setup() {
     const uint32_t PSRAM_ALIGN = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
     psram = (uint32_t *) heap_caps_aligned_alloc(64, psram_sz,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
     dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    //delay(2000);
+    delay(500);
     //j.begin();
     //j.jw.enabled = false;
     uint64_t mask = 0;
@@ -152,8 +154,8 @@ void setup() {
 
     pinMode(0, OUTPUT);
     digitalWrite(0, 1);
-    ledcAttachChannel(0, testFreq, 3, 1);
-    ledcWrite(0, 4);
+    ledcAttachChannel(0, testFreq, 1, 1);
+    ledcWrite(0, 1);
 
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
@@ -171,56 +173,56 @@ void IRAM_ATTR iloop_dram() {
 	portDISABLE_INTERRUPTS();
 	ESP_INTR_DISABLE(XT_TIMER_INTNUM);
     uint32_t startTsc = xthal_get_ccount();
-    static const int trig = 0x1;
-    uint32_t r0;
+    static const int clockMask = 0x1;
+    uint32_t r0r, r0f;
     uint32_t tsc, lastTsc = xthal_get_ccount();
     uint32_t *dram_end = dram + dram_sz / sizeof(uint32_t);
     uint32_t triggerMask = 0xffffffff;
     bool triggered = false;
     register uint32_t *out = dram;
     while(1) { 
-        while(((r0 = *gpio0) & trig) == trig) {}
+        while(((r0f = *gpio0) & clockMask)) {}
         tsc = xthal_get_ccount();
-        const uint32_t r1 = *gpio1;
-        if (r0 & triggerMask) { 
+        uint32_t r1 = *gpio1;
+
+        //*(out++) = tsc;
+        uint32_t elapsed = tsc - lastTsc;
+        lastTsc = tsc;
+        if (elapsed > lateThresholdTicks) {
+            lateTsc = tsc; 
+            lateCount++;
+            lateIndex = out - dram;
+            if (elapsed > lateMax)  
+                lateMax = elapsed;
+            if (elapsed < lateMin)
+                lateMin = elapsed;
+        }else {
+            if (elapsed > lateMax)  
+                lateMax = elapsed;
+            //if (elapsed < lateMin)
+            //    lateMin = elapsed;
+        }
+
+        if (!triggered && (r0f & triggerMask)) { 
             triggered = true;
         }
-        if (triggered ) { 
-            *(out++) = PACK(r0, r1);
-            //*(out++) = tsc;
+
+        while(!((r0r = *gpio0) & clockMask)) {}
+        //uint32_t r1b = *gpio1;
+
+        if (triggered) { 
+            if (r0r & 0x3) {
+                *(out++) = PACK((r0r & 0xffff0000) | (r0f & 0xffff), r1);
+            } else { 
+                *(out++) = PACK((r0r & 0xffff0000) | (r0f & 0xffff), r1);
+            }
             if (out >= dram_end) { 
                 out = dram;
                 dramLoopCount++;
-                if (0) { 
-                    dramElapsedTsc = tsc - startTsc;
-                    startTsc = tsc;
-                }
+                //dramElapsedTsc = tsc - startTsc;
+                //startTsc = tsc;
             }
-        }
-        while(((*gpio0) & trig) != trig) {}
-                    
-        if (1) {  
-            //*(out++) = tsc;
-            uint32_t elapsed = tsc - lastTsc;
-            lastTsc = tsc;
-            if (elapsed > lateThresholdTicks) {
-                lateTsc = tsc; 
-                lateCount++;
-                lateIndex = out - dram;
-                if (elapsed > lateMax)  
-                    lateMax = elapsed;
-                if (elapsed < lateMin || lateMin == 0)
-                    lateMin = elapsed;
-            }
-            if (0) { 
-                if (elapsed > lateMax)  
-                    lateMax = elapsed;
-                if (elapsed < lateMin || lateMin == 0)
-                    lateMin = elapsed;
-            }
-            //while(xthal_get_ccount() - tsc < halfCycleTicks - 20) {}
-
-        }
+        }                    
     }
 }
 
