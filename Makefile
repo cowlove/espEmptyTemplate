@@ -11,11 +11,12 @@ GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 ifeq (${BOARD},esp32s3)
 	# EventsCore=0,PSRAM=opi,CDCOnBoot=cdc
 	CDC_ON_BOOT=1
-	BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM 
+	BUILD_EXTRA_FLAGS += -O3 -DBOARD_HAS_PSRAM 
 	BUILD_MEMORY_TYPE=qio_opi
 	PORT ?= /dev/ttyACM0
 else
 	BUILD_MEMORY_TYPE=qio_qspi
+	#BUILD_EXTRA_FLAGS += -fpermissive
 	PORT ?= /dev/ttyUSB0
 endif
 UPLOAD_PORT ?= ${PORT}

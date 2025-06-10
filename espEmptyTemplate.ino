@@ -1,14 +1,19 @@
-//#define CONFIG_IDF_TARGET_ESP32 1
-//#include "jimlib.h"
-#include "serialLog.h"
 #include <driver/gpio.h>
 #include <xtensa/hal.h>
 #include "freertos/xtensa_timer.h"
 #include "esp_intr_alloc.h"
 #include "rtc_wdt.h" .
-
+#include "soc/timer_group_struct.h"
+#include "soc/timer_group_reg.h"
+#include "esp_task_wdt.h"
+#include <esp_async_memcpy.h>
+#include <hal/cache_hal.h>
+#include <hal/cache_ll.h>
 #ifndef CSIM
 #endif
+
+#include <vector>
+using std::vector;
 
 // Usable pins
 // 1-18             (18)
@@ -33,201 +38,189 @@ volatile uint32_t *gpio0 = (volatile uint32_t *)GPIO_IN_REG;
 volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
-int dram_sz = 16 * 1024;
+int dram_sz = 2048;
 uint32_t *dram;
 volatile uint32_t buf;
+static const int testFreq = 1.8 * 1000000;
+static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
+static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
 
-WiFiUDP udpCmd;
-
-uint32_t psramElapsedUsec;
-uint32_t dramElapsedUsec;
-int psramLoopCount = 0;
-int dramLoopCount = 0;
+uint32_t dramElapsedTsc;
+uint32_t lateTsc;
+int dramLoopCount = 0, psramLoopCount = 0;
 int lateCount = 0;
-int lateMax = 0;
+int lateMax = 0, lateMin = 0, lateIndex = -1;
+int cbCount = 0;
 
-void threadFunc(void *) { 
-    uint32_t lastMs = millis();
+// Callback function (optional)
+static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*, void*) {
+    cbCount++;
+    return false;
+}
+
+void IRAM_ATTR threadFunc(void *) { 
     int pi = 0; 
+
+    const async_memcpy_config_t config {
+        .backlog = 8,
+        .sram_trans_align = 0,
+        .psram_trans_align = 0,
+        .flags = 0
+    };
+    async_memcpy_handle_t handle = NULL;
+    if (esp_async_memcpy_install(&config, &handle) == ESP_OK) {
+        printf("Async memcpy driver installed successfully.\n");
+    } else {
+        printf("Failed to install async memcpy driver.\n");
+        return;
+    }
+
+    uint32_t lastMs = millis();
     while(1) { 
-        if (psramLoopCount != dramLoopCount) { 
+        if (psramLoopCount != dramLoopCount) {
+            psramLoopCount++; 
             const uint32_t startUsec = micros();
-#if 0 
-            int len = dram_sz;
-            while(len > 0) { 
-                //OUT("sending len %d", len);
-                udpCmd.beginPacket("255.255.255.255", 9000);
-                udpCmd.write((uint8_t *)dram, 1024);
-                udpCmd.endPacket();
-                len -= 1024;
-            }
-#else
-            for(register int n = 0; n < dram_sz / sizeof(uint32_t); n += 1) {
-                *(psram + pi) = *(dram + n);
-                //*(psram + pi) = 0;
-                //buf = *(dram + n);
-                //*psram = 0;
-                pi = pi + 1;
-                if (pi >= psram_sz / sizeof(uint32_t))
-                    pi = 0;
-            }
-#endif
-            psramElapsedUsec = micros() - startUsec;
-            psramLoopCount++;
+            if (esp_async_memcpy(handle, (void *)(psram + pi), (void *)dram, dram_sz, 
+                async_memcpy_callback, NULL)) { 
+                printf("async ERR psramLoopCount %d/%d\n", psramLoopCount, psram_sz / dram_sz);
+                break;
+            } 
+            pi = pi + dram_sz / sizeof(uint32_t);
+            if (pi > (psram_sz - dram_sz * 2) / sizeof(uint32_t))
+                break;
         }
         uint32_t ms = millis();
         if (ms / 1000 != lastMs / 1000) {
 			int lm = lateMax;
-			lateMax = 0;
-            OUT("late %d lateMax %d dram %.5f %d psram %.5f %d", 
-                lateCount, lm, psram_sz / 4.0 / dramElapsedUsec, dramLoopCount,
-                dram_sz / 4.0 / psramElapsedUsec, psramLoopCount);
+            int lmi = lateMin;
+			lateMax = lateMin = 0;
+            printf("cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dram %.5f %d\n", 
+                cbCount, lateCount, lateIndex, lmi, lm, lateTsc, dram_sz / 4.0 / dramElapsedTsc * 240, dramLoopCount);
             lastMs = ms;
+            lateIndex = -1;
+            //lateCount = 0;
+            lateTsc = 0 ;
         }
-        
-        yield();
+        //delayMicroseconds(1);
     }
+    // DONE
+    while(cbCount != psramLoopCount) delay(1);
+    int lm = lateMax;
+    int lmi = lateMin;
+    lateMax = lateMin = 0;
+    printf("cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dram %.5f %d psramLoop %d\n", 
+        cbCount, lateCount, lateIndex, lmi, lm, lateTsc, dram_sz / 4.0 / dramElapsedTsc * 240, dramLoopCount, psramLoopCount);
+    ESP.restart();
 }
-
-uint32_t *isrPtr = 0;
-uint32_t *isrPtrEnd = 0; 
-uint32_t isrBeginUs = 0, isrEndUs = 0;
-int isrCount = 0;
-
-void IRAM_ATTR isr() {
-    isrCount++;
-    if (isrBeginUs == 0) isrBeginUs = micros();
-    if (isrPtr != isrPtrEnd) {
-        *isrPtr = PACK(*gpio0, *gpio1);
-        isrPtr++;
-        if (isrPtr == isrPtrEnd) {
-            isrEndUs = micros();
-        }
-    } 
-}
-void IRAM_ATTR isrNO() {}
 
 void setup() {
-    psram = (uint32_t *) ps_malloc(psram_sz);
-    dram = (uint32_t *)malloc(dram_sz);
-    xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
-    delay(1000);
+    const uint32_t PSRAM_ALIGN = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
+    psram = (uint32_t *) heap_caps_aligned_alloc(64, psram_sz,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    //delay(2000);
     //j.begin();
     //j.jw.enabled = false;
     uint64_t mask = 0;
     for(auto i : pins) mask |= ((uint64_t)0x1) << i;
     uint32_t maskl = (uint32_t)mask;
     uint32_t maskh = (uint32_t)((mask & 0xffffffff00000000LL) >> 32);
-    OUT("MASK %d %08x %08x %08x", pins.size(), maskl, maskh, PACK(maskl, maskh));
+    printf("MASK %d %08x %08x %08x\n", pins.size(), maskl, maskh, PACK(maskl, maskh));
 
     if (0) {  
         for(auto i : pins) pinMode(i, INPUT_PULLDOWN);
         delay(100);
-        OUT("PD   %d %08x %08x %08x", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("PD   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) pinMode(i, INPUT_PULLUP);
         delay(100);
-        OUT("PU   %d %08x %08x %08x", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("PU   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) pinMode(i, OUTPUT);
         for(auto i : pins) digitalWrite(i, 0);
         delay(100);
-        OUT("OL   %d %08x %08x %08x", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("OL   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) digitalWrite(i, 1);
         delay(100);
-        OUT("OH   %d %08x %08x %08x", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("OH   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) pinMode(i, INPUT_PULLUP);
         delay(100);
-        OUT("PU   %d %08x %08x %08x", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("PU   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
     }
     for(auto i : pins) pinMode(i, INPUT);
 
     pinMode(0, OUTPUT);
     digitalWrite(0, 1);
-    ledcInit(0, 2 * 1000000, 2, 1);
-    ledcWrite(0, 2);
+    ledcAttachChannel(0, testFreq, 3, 1);
+    ledcWrite(0, 4);
 
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
         uint32_t r1 = *gpio1;
-        OUT("%08x %08x %08x", r0, r1, PACK(r0, r1)); 
+        printf("%08x %08x %08x\n", r0, r1, PACK(r0, r1)); 
     }
-    OUT("ps_malloc() result %x, %d, %d; malloc() result %x", 
-        psram, ESP.getFreePsram(), ESP.getPsramSize(), dram);
-   // esp_himem_get_free_size(), esp_himem_get_phys_size());
+    printf("freq %.4fMhz threshold %d halfcycle %d ps_malloc() result %x, %d, %d; malloc() result %x\n", 
+        testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, psram, ESP.getFreePsram(), ESP.getPsramSize(), dram);
+    // esp_himem_get_free_size(), esp_himem_get_phys_size());
+    xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
+    delay(100);
 }
-
-#include "soc/timer_group_struct.h"
-#include "soc/timer_group_reg.h"
-#include "esp_task_wdt.h"
-
-
-void IRAM_ATTR iloop_psram() { 
-	TIMERG1.wdtwprotect.wdt_wkey = TIMG_WDT_WKEY_V; // Unlock timer config.
-	TIMERG1.wdtfeed.wdt_feed = 1; // Reset feed count.
-	TIMERG1.wdtconfig0.wdt_en = 0; // Disable timer.
-	TIMERG1.wdtwprotect.wdt_wkey = 0; // Lock timer config.
-
-	esp_task_wdt_delete(NULL);
-
-	//portDISABLE_INTERRUPTS();
-	ESP_INTR_DISABLE(XT_TIMER_INTNUM);
-    while(1) { 
-       //wdtReset();
-       const uint32_t startUsec = micros();
-       static const int trig = 0x2;
-       register uint32_t r0;
-       uint32_t lastTsc = xthal_get_ccount();
-       for(register int n = 0; n < psram_sz / sizeof(uint32_t); n += 1) {
-            while(((r0 = *gpio0) & trig) == trig) {}
-
-			uint32_t tsc = xthal_get_ccount();
-			uint32_t elapsed = tsc - lastTsc;
-			lastTsc = tsc;
-			if (elapsed > 240) 
-				lateCount++; 
-			if (elapsed > lateMax) 
-				lateMax = elapsed;
-
-            //*(psram + n) = PACK(r0, *gpio1);
-            //*(psram + n) = PACK(r0, 0);//*gpio1);
-            while(((*gpio0) & trig) != trig) {}
-        }
-        dramElapsedUsec = micros() - startUsec;
-    }
-}
-
 
 void IRAM_ATTR iloop_dram() {	
 	portDISABLE_INTERRUPTS();
 	ESP_INTR_DISABLE(XT_TIMER_INTNUM);
-	while(1) { 
-        //wdtReset();
-        const uint32_t startUsec = micros();
-        static const int trig = 0x2;
-        uint32_t r0;
-        uint32_t lastTsc = xthal_get_ccount();
-        for(int i = 0; i < psram_sz / dram_sz; i++) { 
-            for(register int n = 0; n < dram_sz / sizeof(uint32_t); n += 1) {
-                //while(((r0 = *gpio0) & trig) == trig) {}
-                
-				uint32_t tsc = xthal_get_ccount();
-				uint32_t elapsed = tsc - lastTsc;
-				lastTsc = tsc;
-				if (elapsed > 240) 
-					lateCount++; 
-				if (elapsed > lateMax) 
-					lateMax = elapsed;
-               
-                //*(dram + n ) = PACK(r0, *gpio1);
-                
-                //while(((*gpio0) & trig) != trig) {}
-            }
-            dramLoopCount++;
+    uint32_t startTsc = xthal_get_ccount();
+    static const int trig = 0x1;
+    uint32_t r0;
+    uint32_t tsc, lastTsc = xthal_get_ccount();
+    uint32_t *dram_end = dram + dram_sz / sizeof(uint32_t);
+    uint32_t triggerMask = 0xffffffff;
+    bool triggered = false;
+    register uint32_t *out = dram;
+    while(1) { 
+        while(((r0 = *gpio0) & trig) == trig) {}
+        tsc = xthal_get_ccount();
+        const uint32_t r1 = *gpio1;
+        if (r0 & triggerMask) { 
+            triggered = true;
         }
-        dramElapsedUsec = micros() - startUsec;
+        if (triggered ) { 
+            *(out++) = PACK(r0, r1);
+            //*(out++) = tsc;
+            if (out >= dram_end) { 
+                out = dram;
+                dramLoopCount++;
+                if (0) { 
+                    dramElapsedTsc = tsc - startTsc;
+                    startTsc = tsc;
+                }
+            }
+        }
+        while(((*gpio0) & trig) != trig) {}
+                    
+        if (1) {  
+            //*(out++) = tsc;
+            uint32_t elapsed = tsc - lastTsc;
+            lastTsc = tsc;
+            if (elapsed > lateThresholdTicks) {
+                lateTsc = tsc; 
+                lateCount++;
+                lateIndex = out - dram;
+                if (elapsed > lateMax)  
+                    lateMax = elapsed;
+                if (elapsed < lateMin || lateMin == 0)
+                    lateMin = elapsed;
+            }
+            if (0) { 
+                if (elapsed > lateMax)  
+                    lateMax = elapsed;
+                if (elapsed < lateMin || lateMin == 0)
+                    lateMin = elapsed;
+            }
+            //while(xthal_get_ccount() - tsc < halfCycleTicks - 20) {}
+
+        }
     }
 }
 
@@ -236,7 +229,7 @@ void loop() {
     disableCore1WDT();
 	//disableCore0WDT();
 	disableLoopWDT();
-    iloop_psram();
+    iloop_dram();
 }
 
 #ifdef CSIM
