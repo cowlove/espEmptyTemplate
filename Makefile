@@ -37,7 +37,7 @@ include ~/Arduino/libraries/makeEspArduino/makeEspArduino.mk
 endif
 
 cat:    
-	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 115200 && cat ${PORT}; fi; done  | tee ./cat.`basename ${PORT}`.out
+	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 921600 && cat ${PORT}; fi; done  | tee ./cat.`basename ${PORT}`.out
 socat:  
 	socat udp-recvfrom:9000,fork - 
 mocat:
