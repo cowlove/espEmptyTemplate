@@ -14,7 +14,7 @@
 #include <hal/dedic_gpio_cpu_ll.h>
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_reg.h"
-
+#include <xtensa/core-macros.h>
 #ifndef CSIM
 #endif
 
@@ -391,7 +391,8 @@ void IRAM_ATTR iloop_timings1() {
         //dedic_gpio_cpu_ll_read_in();      //20.85ns
         dedic_gpio_cpu_ll_write_all(0xff);
         dedic_gpio_cpu_ll_write_all(0);
-
+        xthal_get_ccount(); 
+        XTHAL_GET_CCOUNT();
 #if 0
         //r = *gpio0;
         while(!(r = *gpio0) & (1 << 17)) {}                                          // read addr, rw, clk, casInh                                                      //  75.0
