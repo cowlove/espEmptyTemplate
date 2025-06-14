@@ -266,7 +266,7 @@ void setup() {
             .out_en = 1
         },
     };
-    //ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleB));
+    ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleB));
 
 }
 
@@ -360,7 +360,8 @@ void IRAM_ATTR iloop_pbi() {
         uint16_t addr = (r & addrMask) >> addrShift;         // read address, RW flag and casInh_  from bus 
         
         if (!(r & readWriteBit)) {                           // 1. READ        
-            REG_WRITE(GPIO_OUT1_REG, atariRam[addr] << dataShift);                         //    write DATA lines
+            dedic_gpio_cpu_ll_write_all(atariRam[addr]);
+            //REG_WRITE(GPIO_OUT1_REG, atariRam[addr] << dataShift);                         //    write DATA lines
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);      //    enable DATA lines for output
             while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}//    wait falling clock edge
             // NOP, NOP delay                                //    leave data on the bus for tHR
@@ -372,6 +373,7 @@ void IRAM_ATTR iloop_pbi() {
             atariRam[0] = (*gpio1 & dataMask) >> dataShift;  //    get write data from bus, write to local RAM 
         }
         REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask |~0);          //    release EXTSEL  
+        dedic_gpio_cpu_ll_write_all(0);
     }
 }
 
