@@ -355,10 +355,10 @@ void IRAM_ATTR iloop_pbi() {
     int ram = 0;
     while(1) {
         while(stop) {} 
-        //while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}
         while(((r = *gpio0) & clockMask) == 0) {}
         uint16_t addr = (r & addrMask) >> addrShift;         // read address, RW flag and casInh_  from bus 
         
+        REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);          // drive EXTSEL low  
         if (!(r & readWriteBit)) {                           // 1. READ        
             dedic_gpio_cpu_ll_write_all(atariRam[addr]);
             //REG_WRITE(GPIO_OUT1_REG, atariRam[addr] << dataShift);                         //    write DATA lines
