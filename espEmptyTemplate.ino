@@ -9,6 +9,12 @@
 #include <esp_async_memcpy.h>
 #include <hal/cache_hal.h>
 #include <hal/cache_ll.h>
+
+#include <driver/dedic_gpio.h>
+#include <hal/dedic_gpio_cpu_ll.h>
+#include "soc/io_mux_reg.h"
+#include "soc/gpio_reg.h"
+
 #ifndef CSIM
 #endif
 
@@ -16,18 +22,37 @@
 using std::vector;
 
 // Usable pins
-// 1-18             (18)
+// 0-18 22            (20)
 // 38-48 (6-16)     (11)
-//01234567012345670123456701234567
-//01101111111111111110000000000000
-//00000011111111110000000000000000
+//pin 01234567890123456789012345678901
+//    11111111111111111110001000000000
+//    00000011111111110000000000000000
 
 //data 8
 //addr 16
 //clock sync halt write 
+// TODO: investigate GPIO input filter, GPIO output sync 
+
+//GPIO0 bits: TODO rearrange bits so addr is in low bits and avoids needed a shift
+// Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
+static const int      casInh_Mask = 0x1;    // bit0 
+static const int      addrShift = 1;
+static const int      addrMask = 0xffff << addrShift;  // bits 1-16
+static const int      clockPin = 17;
+static const int      clockMask = (1 << clockPin);
+static const int      readWriteBit = (1 << 18); // TMP use clock as RW bit, will always indicate a read
+
+//GPIO1 bits
+static const int      dataShift = 9;
+static const int      dataMask = (0xff << dataShift);
+static const int      extSel_PortPin = 38 /*pin*/ - 32 /* port base*/;
+static const int      extSel_Mask = (1 << extSel_PortPin);
 
 
-vector<int> pins = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,38,39,40,41,42,43,44,45,46,47,48};
+volatile uint8_t atariRam[64 * 1024] = {0xff};
+
+
+vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,38,39,40,41,42,43,44,45,46,47,48};
 
 #define PACK(r0, r1) (((r1 & 0x0001ffc0) << 15) | ((r0 & 0x0007fffe) << 2)) 
 
@@ -54,7 +79,7 @@ int dramLoopCount = 0, psramLoopCount = 0;
 int lateCount = 0;
 int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
-bool stop = false;
+volatile bool stop = false;
 
 // Callback function (optional)
 static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*, void*) {
@@ -62,7 +87,15 @@ static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*
     return false;
 }
 
-void IRAM_ATTR threadFunc(void *) { 
+volatile int tickCount = 0;
+void threadFunc2(void *) {
+    while(1) {  
+        printf("tickCount %d\n", tickCount);
+        tickCount = 0;
+        delay(1000);
+    }
+}
+void threadFunc(void *) { 
     int pi = 0; 
 
     const async_memcpy_config_t config {
@@ -148,14 +181,17 @@ void IRAM_ATTR threadFunc(void *) {
     ESP.restart();
 }
 
+dedic_gpio_bundle_handle_t bundleA, bundleB;
+
 void setup() {
+    delay(1000);
+    Serial.begin(115200);
+    printf("setup()\n");
+
     const uint32_t PSRAM_ALIGN = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
     psram = (uint32_t *) heap_caps_aligned_alloc(64, psram_sz,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
     dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    delay(500);
-    Serial.begin(921600);
-    //j.begin();
-    //j.jw.enabled = false;
+
     uint64_t mask = 0;
     for(auto i : pins) mask |= ((uint64_t)0x1) << i;
     uint32_t maskl = (uint32_t)mask;
@@ -188,23 +224,50 @@ void setup() {
             printf("PU   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
         } while(1);
     }
-    for(auto i : pins) pinMode(i, INPUT_PULLUP);
+    for(auto i : pins) pinMode(i, INPUT_PULLDOWN);
+    pinMode(38, OUTPUT);
+    pinMode(42, OUTPUT);
+    digitalWrite(42, 1);
+    int clkPin = 17;
+    pinMode(clkPin, OUTPUT);
+    digitalWrite(clkPin, 0);
+    ledcAttachChannel(clkPin, testFreq, 1, 0);
+    ledcWrite(clkPin, 1);
 
-    pinMode(0, OUTPUT);
-    digitalWrite(0, 1);
-    ledcAttachChannel(0, testFreq, 1, 1);
-    ledcWrite(0, 0);
-
-    for(int i = 0; i < 0; i++) { 
+    for(int i = 0; i < 100; i++) { 
         uint32_t r0 = *gpio0;
         uint32_t r1 = *gpio1;
         printf("%08x %08x %08x\n", r0, r1, PACK(r0, r1)); 
     }
+
     printf("freq %.4fMhz threshold %d halfcycle %d ps_malloc() result %x, %d, %d; malloc() result %x\n", 
         testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, psram, ESP.getFreePsram(), ESP.getPsramSize(), dram);
     // esp_himem_get_free_size(), esp_himem_get_phys_size());
-    xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
+    xTaskCreatePinnedToCore(threadFunc2, "th", 2 * 1024, NULL, 0, NULL, 0);
     delay(500);
+    digitalWrite(42, 0);
+
+    int bundleA_gpios[] = {clockPin};
+    dedic_gpio_bundle_config_t bundleA_config = {
+        .gpio_array = bundleA_gpios,
+        .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
+        .flags = {
+            .in_en = 1,
+            .out_en = 0
+        },
+    };
+    ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleA));
+
+    int bundleB_gpios[] = {40,41,42,43,44,45,46,47};
+    dedic_gpio_bundle_config_t bundleB_config = {
+        .gpio_array = bundleB_gpios,
+        .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
+        .flags = {
+            .out_en = 1
+        },
+    };
+    //ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleB));
+
 }
 
 void IRAM_ATTR iloop_dram() {	
@@ -268,12 +331,134 @@ void IRAM_ATTR iloop_dram() {
     }
 }
 
+
+
+
+void IRAM_ATTR iloop_pbi() {	
+
+    while(0) {
+        while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}
+        REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
+        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}
+        REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask);
+    }
+
+    while(0) { 
+        while((*gpio0 & clockMask) != clockMask) {}              
+        REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
+        while((*gpio0 & clockMask) == clockMask) {}              
+        REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask);
+    }
+
+
+    uint32_t r;
+    int ram = 0;
+    while(1) {
+        while(stop) {} 
+        //while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}
+        while(((r = *gpio0) & clockMask) == 0) {}
+        uint16_t addr = (r & addrMask) >> addrShift;         // read address, RW flag and casInh_  from bus 
+        
+        if (!(r & readWriteBit)) {                           // 1. READ        
+            REG_WRITE(GPIO_OUT1_REG, atariRam[addr] << dataShift);                         //    write DATA lines
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);      //    enable DATA lines for output
+            while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}//    wait falling clock edge
+            // NOP, NOP delay                                //    leave data on the bus for tHR
+            REG_WRITE(GPIO_OUT1_REG, 0); // TMP to show timing
+            REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);      //    stop driving data lines                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+            tickCount++;
+        } else {                                             // 2. WRITE 
+            while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}//    wait falling clock edge
+            atariRam[0] = (*gpio1 & dataMask) >> dataShift;  //    get write data from bus, write to local RAM 
+        }
+        REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask |~0);          //    release EXTSEL  
+    }
+}
+
+volatile uint32_t dummy = 0;
+volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
+int maxElapsed1 = 0, maxElapsed2 = 0;
+int maxElapsedIndex1 = 0;
+void IRAM_ATTR iloop_timings1() {
+    int iterations = 1000000; 
+    uint32_t startTsc = xthal_get_ccount();
+    uint32_t r;
+    uint32_t lastTsc = startTsc;
+    for(int n = 0; n < iterations; n++) { 
+        //dedic_gpio_bundle_read_in(bundleA); // 95ns
+        //dedic_gpio_cpu_ll_read_in();      //20.85ns
+        dedic_gpio_cpu_ll_write_all(0xff);
+        dedic_gpio_cpu_ll_write_all(0);
+
+#if 0
+        //r = *gpio0;
+        while(!(r = *gpio0) & (1 << 17)) {}                                          // read addr, rw, clk, casInh                                                      //  75.0
+        if ((r & casInh_Mask))                                                      // 12.5
+            continue;
+        if (!(r & readWriteBit)) {                                                  //  37.48 ns 
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);      //    enable DATA lines for output
+            uint16_t addr = (r & addrMask) >> addrShift;                            //  12.5 ns 
+            *gpio1 = (((uint32_t)atariRam[addr]) << dataShift) | extSel_Mask;       //  25.0 ns 
+        }
+        uint32_t tsc = xthal_get_ccount();                                      //  25.0 ns
+        int elapsed = tsc - lastTsc;
+        lastTsc = tsc;
+        if (elapsed > maxElapsed1) {
+            maxElapsed1 = elapsed; 
+            maxElapsedIndex1 = n;
+        }
+#endif
+    }
+    uint32_t endTsc = xthal_get_ccount();
+    avgTicks1 = 1.0 * (endTsc - startTsc) / iterations;
+    avgNs1 = avgTicks1 / 240 * 1000;
+}
+
+void IRAM_ATTR iloop_timings2() {
+    int iterations = 1000000; 
+    uint32_t r;
+    uint32_t startTsc = xthal_get_ccount();
+    uint32_t lastTsc = startTsc;
+    for(int n = 0; n < iterations; n++) { 
+        while((r = *gpio0) & (1 << 17)) {}                                          // read addr, rw, clk, casInh                                                      //  75.0
+        if ((r & casInh_Mask))                                                      // 12.5
+            continue;
+        if (!(r & readWriteBit)) {                                                  //  37.48 ns 
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);      //    enable DATA lines for output
+            uint16_t addr = (r & addrMask) >> addrShift;                            //  12.5 ns 
+            *gpio1 = (((uint32_t)atariRam[addr]) << dataShift) | extSel_Mask;       //  25.0 ns 
+            //uint32_t t = xthal_get_ccount();                                      //  25.0 ns
+        }
+        uint32_t tsc = xthal_get_ccount();                                      //  25.0 ns
+        int elapsed = tsc - lastTsc;
+        lastTsc = tsc;
+        if (elapsed > maxElapsed2)
+            maxElapsed2 = elapsed; 
+    }
+    uint32_t endTsc = xthal_get_ccount();
+    avgTicks2 = 1.0 * (endTsc - startTsc) / iterations;
+    avgNs2 = avgTicks2 / 240 * 1000;
+}
+
+
 void loop() {
     //j.run();
-    disableCore1WDT();
-	//disableCore0WDT();
-	disableLoopWDT();
-    iloop_dram();
+
+
+    if (1) { 
+        disableCore1WDT();
+        portDISABLE_INTERRUPTS();
+        ESP_INTR_DISABLE(XT_TIMER_INTNUM);
+        disableLoopWDT();
+    }
+    maxElapsed1 = maxElapsed2 = maxElapsedIndex1 = -1;
+    iloop_pbi();
+    iloop_timings1();
+    //iloop_timings2();
+    portENABLE_INTERRUPTS();
+    printf("avg loop1 %.2f ticks %.2f ns maxTicks %d at #%d   loop2 %.2f ticks %.2f ns maxTicks %d  diff %.2f\n", 
+        avgTicks1, avgNs1, maxElapsed1, maxElapsedIndex1, avgTicks2, avgNs2, maxElapsed2, avgNs2 - avgNs1); 
+    delay(100);
 }
 
 #ifdef CSIM
@@ -288,3 +473,49 @@ class SketchCsim : public Csim_Module {
 } sketchCsim;
 #endif
  
+
+
+// https://www.oocities.org/dr_seppel/pbi1_eng.htm
+// https://www.oocities.org/dr_seppel/pbi2_eng.htm
+// https://github.com/maarten-pennings/6502/blob/master/4ram/README.md
+
+//PBI pins
+// A0-15
+// D0-7
+// _ExtSel - override RAM access
+// _MPD
+// _CasInh - output 0 = atari is reading ram, 1 atari is reading a rom 
+
+
+// D1FF NEWPORT
+// D301 PORTB and MMU  bit 0 - OS ROMS enable, 1 basic ROM enable, 2 1200XL leds, 4-5 130xe bank switch, 5000-57FF RAM 
+// D800-DFFF    Math ROM  
+// D800 ROM cksum lo
+// D801 ROM cksum hi
+// D802 ROM version
+// D803 ID num
+// D804 Device Type
+// D805 JMP (0x4C)
+// D809 ISR vect LO
+// D80A ISR vect HI
+// D80B ID num 2 (0x91)
+// D80C Device Name (ASCII)
+// D80A-D818 device vectors
+// D819 JMP ($4C)
+// D820 Init Vector LO
+// D821 Init vector hi
+
+//OS checks D808 for 0x4C and D80B for 0x91, then jumps to D819
+
+//RAM MAP
+// $8000-9FFF
+// $A000-BFFF
+
+// $C000-FFFF OS ROM
+// $D000-D7FF 2K for mmapped chips, GTIA, POKEY, PIA, ANTIC
+// $D000 GTIA  
+// $D200 POKEY 
+// $D300 PIA
+// $D400 ANTIC
+
+// need PBI lines casInh_, WRT, phi2, ADDR0-15, DATA0-7, EXTSEL

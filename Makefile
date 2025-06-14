@@ -21,7 +21,7 @@ else
 endif
 UPLOAD_PORT ?= ${PORT}
 
-BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" -O3
+BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" -Ofast
 	
 #sed  's|^\(.*/srmodels.bin\)|#\1|g' -i ~/.arduino15/packages/esp32/hardware/esp32/3.2.0/boards.txt  
 
@@ -37,7 +37,7 @@ include ~/Arduino/libraries/makeEspArduino/makeEspArduino.mk
 endif
 
 cat:    
-	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 921600 && cat ${PORT}; fi; done  | tee ./cat.`basename ${PORT}`.out
+	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 115200 && cat ${PORT}; fi; done  | tee ./cat.`basename ${PORT}`.out
 socat:  
 	socat udp-recvfrom:9000,fork - 
 mocat:
