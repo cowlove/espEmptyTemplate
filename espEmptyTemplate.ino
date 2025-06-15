@@ -38,18 +38,24 @@ using std::vector;
 
 //GPIO0 bits: TODO rearrange bits so addr is in low bits and avoids needed a shift
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
+static const int      resetPin = 0;
 static const int      casInh_Mask = 0x1;    // bit0 
 static const int      addrShift = 1;
 static const int      addrMask = 0xffff << addrShift;  // bits 1-16
 static const int      clockPin = 17;
 static const int      clockMask = (1 << clockPin);
-static const int      readWriteBit = (1 << 18); // TMP use clock as RW bit, will always indicate a read
-
+static const int      readWriteMask = (1 << 18); // TMP use clock as RW bit, will always indicate a read
 //GPIO1 bits
-static const int      dataShift = 9;
-static const int      dataMask = (0xff << dataShift);
-static const int      extSel_PortPin = 38 /*pin*/ - 32 /* port base*/;
+
+static const int      extSel_Pin = 38;
+static const int      extSel_PortPin = extSel_Pin - 32 /* port base*/;
 static const int      extSel_Mask = (1 << extSel_PortPin);
+static const int      resetMask = 1 << (39 - 32 /*port base*/); 
+static const int      data0Pin = 41;
+static const int      data0PortPin = data0Pin - 32;
+static const int      dataShift = data0PortPin;
+static const int      dataMask = (0xff << dataShift);
+
 
 
 volatile uint8_t atariRam[64 * 1024] = {0xff};
@@ -228,15 +234,18 @@ void setup() {
         } while(1);
     }
     for(auto i : pins) pinMode(i, INPUT_PULLDOWN);
-    pinMode(38, OUTPUT);
-    pinMode(42, OUTPUT);
-    digitalWrite(42, 1);
-    int clkPin = 17;
-    pinMode(clkPin, OUTPUT);
-    digitalWrite(clkPin, 0);
-    ledcAttachChannel(clkPin, testFreq, 1, 0);
-    ledcWrite(clkPin, 1);
 
+    vector<int> outputPins = {extSel_Pin, data0Pin};
+    for(auto i : pins) {
+        pinMode(i, OUTPUT);
+        digitalWrite(i, 1);
+    }
+    if (0) { // simulate clock signal 
+        pinMode(clockPin, OUTPUT);
+        digitalWrite(clockPin, 0);
+        ledcAttachChannel(clockPin, testFreq, 1, 0);
+        ledcWrite(clockPin, 1);
+    }
     for(int i = 0; i < 100; i++) { 
         uint32_t r0 = *gpio0;
         uint32_t r1 = *gpio1;
@@ -248,7 +257,6 @@ void setup() {
     // esp_himem_get_free_size(), esp_himem_get_phys_size());
     xTaskCreatePinnedToCore(threadFunc, "th", 2 * 1024, NULL, 0, NULL, 0);
     delay(500);
-    digitalWrite(42, 0);
 
     int bundleA_gpios[] = {clockPin, 3,4,5,6,7,8,9};
     dedic_gpio_bundle_config_t bundleA_config = {
@@ -361,7 +369,7 @@ void IRAM_ATTR iloop_pbi() {
         uint16_t addr = (r & addrMask) >> addrShift;         // read address, RW flag and casInh_  from bus 
         
         REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);          // drive EXTSEL low  
-        if (!(r & readWriteBit)) {                           // 1. READ        
+        if (!(r & readWriteMask)) {                           // 1. READ        
             dedic_gpio_cpu_ll_write_all(atariRam[addr]);
             //REG_WRITE(GPIO_OUT1_REG, atariRam[addr] << dataShift);                         //    write DATA lines
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);      //    enable DATA lines for output
@@ -409,7 +417,7 @@ void IRAM_ATTR iloop_timings1() {
         while(!(r = *gpio0) & (1 << 17)) {}                                          // read addr, rw, clk, casInh                                                      //  75.0
         if ((r & casInh_Mask))                                                      // 12.5
             continue;
-        if (!(r & readWriteBit)) {                                                  //  37.48 ns 
+        if (!(r & readWriteMask)) {                                                  //  37.48 ns 
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);      //    enable DATA lines for output
             uint16_t addr = (r & addrMask) >> addrShift;                            //  12.5 ns 
             *gpio1 = (((uint32_t)atariRam[addr]) << dataShift) | extSel_Mask;       //  25.0 ns 
@@ -441,7 +449,7 @@ void IRAM_ATTR iloop_timings2() {
         while((r = *gpio0) & (1 << 17)) {}                                          // read addr, rw, clk, casInh                                                      //  75.0
         if ((r & casInh_Mask))                                                      // 12.5
             continue;
-        if (!(r & readWriteBit)) {                                                  //  37.48 ns 
+        if (!(r & readWriteMask)) {                                                  //  37.48 ns 
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);      //    enable DATA lines for output
             uint16_t addr = (r & addrMask) >> addrShift;                            //  12.5 ns 
             *gpio1 = (((uint32_t)atariRam[addr]) << dataShift) | extSel_Mask;       //  25.0 ns 
