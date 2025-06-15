@@ -21,6 +21,9 @@
 #include <vector>
 using std::vector;
 
+// make ESP_ROOT=~/src/esp32 ARDUINO_LIBS="~/src/esp32/libraries ~/Arduino/libraries" BOARD=esp32s3 IGNORE_STATE=1 uc | tee cat.out
+
+
 // Usable pins
 // 0-18 22            (20)
 // 38-48 (6-16)     (11)
@@ -243,7 +246,7 @@ void setup() {
     printf("freq %.4fMhz threshold %d halfcycle %d ps_malloc() result %x, %d, %d; malloc() result %x\n", 
         testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, psram, ESP.getFreePsram(), ESP.getPsramSize(), dram);
     // esp_himem_get_free_size(), esp_himem_get_phys_size());
-    xTaskCreatePinnedToCore(threadFunc2, "th", 2 * 1024, NULL, 0, NULL, 0);
+    xTaskCreatePinnedToCore(threadFunc, "th", 2 * 1024, NULL, 0, NULL, 0);
     delay(500);
     digitalWrite(42, 0);
 
@@ -273,10 +276,10 @@ void setup() {
 void IRAM_ATTR iloop_dram() {	
 	portDISABLE_INTERRUPTS();
 	ESP_INTR_DISABLE(XT_TIMER_INTNUM);
-    uint32_t startTsc = xthal_get_ccount();
+    uint32_t startTsc = XTHAL_GET_CCOUNT();
     static const int clockMask = 0x2;
     uint32_t r0r, r0f;
-    uint32_t tsc, lastTsc = xthal_get_ccount();
+    uint32_t tsc, lastTsc = XTHAL_GET_CCOUNT();
     uint32_t *out = dram;
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
     uint32_t triggerMask = 0x0003fffc;
@@ -285,8 +288,7 @@ void IRAM_ATTR iloop_dram() {
     while(1) {
         while(stop) {} 
         while(((r0f = *gpio0) & clockMask)) {}
-        RSR(CCOUNT, tsc);
-        tsc = xthal_get_ccount();
+        tsc = XTHAL_GET_CCOUNT();
         r1 = *gpio1;
         uint32_t elapsed = tsc - lastTsc;
         lastTsc = tsc;
@@ -469,7 +471,7 @@ void loop() {
     }
     maxElapsed1 = maxElapsed2 = maxElapsedIndex1 = -1;
     //iloop_pbi();
-    iloop_timings1();
+    //iloop_timings1();
     //iloop_timings2();
     portENABLE_INTERRUPTS();
     printf("avg loop1 %.2f ticks %.2f ns maxTicks %d at #%d   loop2 %.2f ticks %.2f ns maxTicks %d  diff %.2f\n", 
