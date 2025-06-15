@@ -247,7 +247,7 @@ void setup() {
     delay(500);
     digitalWrite(42, 0);
 
-    int bundleA_gpios[] = {clockPin};
+    int bundleA_gpios[] = {clockPin, 3,4,5,6,7,8,9};
     dedic_gpio_bundle_config_t bundleA_config = {
         .gpio_array = bundleA_gpios,
         .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
@@ -377,22 +377,31 @@ void IRAM_ATTR iloop_pbi() {
     }
 }
 
+uint8_t drambytes[255];
 volatile uint32_t dummy = 0;
 volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
 int maxElapsed1 = 0, maxElapsed2 = 0;
 int maxElapsedIndex1 = 0;
 void IRAM_ATTR iloop_timings1() {
-    int iterations = 1000000; 
+    static const int iterations = 1000000; 
     uint32_t startTsc = xthal_get_ccount();
     uint32_t r;
     uint32_t lastTsc = startTsc;
-    for(int n = 0; n < iterations; n++) { 
+    for(int i = 0; i < iterations; i++) { // loop overhead 4 cycles 
         //dedic_gpio_bundle_read_in(bundleA); // 95ns
         //dedic_gpio_cpu_ll_read_in();      //20.85ns
-        dedic_gpio_cpu_ll_write_all(0xff);
-        dedic_gpio_cpu_ll_write_all(0);
-        xthal_get_ccount(); 
-        XTHAL_GET_CCOUNT();
+        //dedic_gpio_cpu_ll_write_all(0xff);
+        //dedic_gpio_cpu_ll_write_all(0);
+        //xthal_get_ccount(); 
+        //if (XTHAL_GET_CCOUNT() - startTsc > 0xffff000) break;  // 4 cycles
+        //__asm__ __volatile__("nop"); // 1 cycle
+        //if (XTHAL_GET_CCOUNT() > 0xffffffe) break;  // 3 cycles
+        //dedic_gpio_cpu_ll_read_in();      // 1 cycle
+        //if ((dedic_gpio_cpu_ll_read_in() & 0x2)) break; // 2 cycles  
+        //if ((dedic_gpio_cpu_ll_read_in() & 0x3) == 3) break; // 3 cycles
+        //psram[i] =  dedic_gpio_cpu_ll_read_in();   // can run at about 620ns loop without blocking psram
+        drambytes[i & 0xff] = dedic_gpio_cpu_ll_read_in();           // 5-6 cycles, could prob do a 30Mhz loop 
+        drambytes[(i + 1) & 0xff] = 0;
 #if 0
         //r = *gpio0;
         while(!(r = *gpio0) & (1 << 17)) {}                                          // read addr, rw, clk, casInh                                                      //  75.0
@@ -403,13 +412,17 @@ void IRAM_ATTR iloop_timings1() {
             uint16_t addr = (r & addrMask) >> addrShift;                            //  12.5 ns 
             *gpio1 = (((uint32_t)atariRam[addr]) << dataShift) | extSel_Mask;       //  25.0 ns 
         }
-        uint32_t tsc = xthal_get_ccount();                                      //  25.0 ns
-        int elapsed = tsc - lastTsc;
+        int elapsed;
+        uint32_t tsc;
+        do {
+            tsc = XTHAL_GET_CCOUNT();                                      //  total loop verhead 18/27 ticks w/ nop && tracking
+            elapsed = tsc - lastTsc;
+            if (elapsed > maxElapsed1) {
+                maxElapsed1 = elapsed; 
+                maxElapsedIndex1 = i;
+            }
+        } while(elapsed < 1);
         lastTsc = tsc;
-        if (elapsed > maxElapsed1) {
-            maxElapsed1 = elapsed; 
-            maxElapsedIndex1 = n;
-        }
 #endif
     }
     uint32_t endTsc = xthal_get_ccount();
@@ -455,7 +468,7 @@ void loop() {
         disableLoopWDT();
     }
     maxElapsed1 = maxElapsed2 = maxElapsedIndex1 = -1;
-    iloop_pbi();
+    //iloop_pbi();
     iloop_timings1();
     //iloop_timings2();
     portENABLE_INTERRUPTS();
