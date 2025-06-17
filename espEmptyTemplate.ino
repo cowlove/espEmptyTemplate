@@ -38,30 +38,50 @@ using std::vector;
 
 //GPIO0 bits: TODO rearrange bits so addr is in low bits and avoids needed a shift
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
-static const int      resetPin = 0;
-static const int      casInh_Mask = 0x1;    // bit0 
-static const int      addrShift = 1;
-static const int      addrMask = 0xffff << addrShift;  // bits 1-16
-static const int      clockPin = 17;
-static const int      clockMask = (1 << clockPin);
-static const int      readWriteMask = (1 << 18); // TMP use clock as RW bit, will always indicate a read
-//GPIO1 bits
 
-static const int      extSel_Pin = 38;
-static const int      extSel_PortPin = extSel_Pin - 32 /* port base*/;
+static const struct {
+   bool fakeClock = 0;
+   bool testPins = 0;
+   bool watchPins = 0; // loop forever printing pin values w/ INPUT_PULLUP
+   bool dumpPsram = 1;
+   bool dumpSram = 1;
+   bool histogram = 0;
+   bool logicAnalyzer = 1;
+} opt;
+
+//GPIO0 pins
+static const int      casInh_pin = 0;
+static const int      casInh_Mask = (0x1 << casInh_pin);               // pin 0 
+static const int      clockPin = 1;
+static const int      clockMask = (0x1 << clockPin);
+static const int      addr0Pin = 2;
+static const int      addrShift = addr0Pin;                   // bus address - pins 1-16
+static const int      addrMask = 0xffff << addrShift;  // 
+static const int      mpdPin = 21;
+static const int      mpdMask = (1 << clockPin);
+static const int      readWritePin = 18;
+static const int      readWriteMask = (1 << readWritePin); 
+
+//GPIO1 pins
+static const int      resetPin = 48;
+static const int      resetMask = 1 << (resetPin - 32); 
+static const int      extSel_Pin = 47;
+static const int      extSel_PortPin = extSel_Pin - 32 /* port1 pin*/;
 static const int      extSel_Mask = (1 << extSel_PortPin);
-static const int      resetMask = 1 << (39 - 32 /*port base*/); 
-static const int      data0Pin = 41;
+static const int      data0Pin = 38;
 static const int      data0PortPin = data0Pin - 32;
 static const int      dataShift = data0PortPin;
 static const int      dataMask = (0xff << dataShift);
 
 
-
 volatile uint8_t atariRam[64 * 1024] = {0xff};
 
-
-vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,38,39,40,41,42,43,44,45,46,47,48};
+//                  +--ROM read
+//                  | +---Clock
+//                  | | +--- ADDR                                +-- RW
+//                  | | |                                        | ++++ MPD out                 +--ext sel out
+//                  | | |                                        | |   +---DATA                 |  +-- RESET in 
+vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45 ,47,48};
 
 #define PACK(r0, r1) (((r1 & 0x0001ffc0) << 15) | ((r0 & 0x0007fffe) << 2)) 
 
@@ -84,13 +104,16 @@ static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
 
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
-int dramLoopCount = 0, psramLoopCount = 0;
+volatile int dramLoopCount = 0;
+volatile int resetLowCycles = 0;
+int psramLoopCount = 0;
 int lateCount = 0;
 int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
 volatile bool stop = false;
+volatile int clockCount = 0;
+uint32_t resetCopyMask = 0x10000000;
 
-// Callback function (optional)
 static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*, void*) {
     cbCount++;
     return false;
@@ -105,6 +128,7 @@ void threadFunc2(void *) {
     }
 }
 void threadFunc(void *) { 
+    printf("threadFunc() start\n");
     int pi = 0; 
 
     const async_memcpy_config_t config {
@@ -141,60 +165,79 @@ void threadFunc(void *) {
             psramLoopCount++; 
         }
         uint32_t ms = millis();
-        //if (ms / 5000 != lastMs / 5000) {
-        //    break;
-        //}
+        if (ms / 100 != lastMs / 100) {
+            //   printf("triggered %d\n", triggered);
+        }
+        //if (ms > 5000) break;
         //delayMicroseconds(1);
     }
     // DONE
     stop = true;
-    int lm = lateMax;
-    int li = lateIndex;
-    int lmi = lateMin;
-    int lc = lateCount;
-    uint32_t ltsc = lateTsc;
-    printf("cbCount %d psramLoopCount %d\n", cbCount, psramLoopCount);
-    //while(cbCount != psramLoopCount) delay(1);
-    printf("\n\n\ncb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dram %.5f %d psramLoop %d\n", 
-        cbCount, lc, li, lmi, lm, ltsc, dma_sz / 4.0 / dramElapsedTsc * 240, dramLoopCount, psramLoopCount);
-    delay(100);
+    delay(50);
 
-    if (0) {
+    if (opt.dumpSram) {
+        uint32_t last = 0;
+        printf("resetLowCycles: %d\n", resetLowCycles);
         for(uint32_t *p = dram; p < dram + dram_sz / sizeof(uint32_t); p++) {
-          printf("DRAM %08x %08x\n", (p - dram) * sizeof(uint32_t), *p);
+            printf("DRAM %08x %08x   ", (p - dram) * sizeof(uint32_t), *p);
+            for(int i = 7; i >= 0; i--) 
+                printf("%c ", ((((*p) & (1 << i)) != 0) ? 'X' : '|'));
+            printf("    ");
+            for(int i = 7; i >= 0; i--) 
+                printf("%c ", ((((*p) & (1 << i)) != (last & (1 <<i))) ? 'C' : '|'));
+          
+          printf("\n");
+          last = *p;
         }
+    
         //for(uint32_t *p = psram; p < psram + (psram_sz - dma_sz * 2) / sizeof(uint32_t); p += dma_sz / sizeof(uint32_t)) {
     }
 
-    if (0) { 
+    if (opt.histogram) { 
+        int first = -1, last;
         int buckets[256];
         bzero(buckets, sizeof(buckets));
-        uint32_t last = psram[0];
+        uint32_t lastBucket = -1;
         for(uint32_t *p = psram; p < psram + (psram_sz - dma_sz * 2) / sizeof(uint32_t); p++) {
+        //for(uint32_t *p = dram; p < dram + dram_sz / sizeof(uint32_t); p++) {
             //printf("PSRAM %08x %08x\n", (p - psram) * sizeof(uint32_t), *p - last);
-            unsigned int delta = *p - last;
-            delta = min(sizeof(buckets) / sizeof(buckets[0]), delta);
-            buckets[delta]++;
-            last = *p;
+            if (lastBucket != -1) {
+                unsigned int delta = *p - lastBucket;
+                delta = min(sizeof(buckets) / sizeof(buckets[0]), delta);
+                buckets[delta]++;
+            }
+            lastBucket = *p;
         }
         for(int i = 0; i < sizeof(buckets) / sizeof(buckets[0]); i++) { 
             printf("%d %d BUCKETS\n", i, buckets[i]);
+            if (buckets[i] > 0) { 
+                if (first == -1) first = i;
+                last = i;
+            }
         }
+        printf("range %d-%d, jitter %d\n", first, last, last - first);
     }
-    if (1) { 
+    printf("\n\n\ncb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dramLoop %d psramLoop %d clockCount %d\n", 
+        cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  dramLoopCount, psramLoopCount, clockCount);
+    if (opt.dumpPsram) { 
         for(uint32_t *p = psram; p < psram + (psram_sz - dma_sz * 2) / sizeof(uint32_t); p++) {
-    //        printf("P %08X\n",*p);
-            printf("P %08X %08X\n", p - psram, *p);
+            //printf("P %08X\n",*p);
+            //if ((*p & resetCopyMask))
+            //if (!(*p &casInh_Mask))
+            //printf("P%08x %04x R%d\n", p - psram, (*p & addrMask) >> addrShift, (*p& resetCopyMask) != 0);
+            //printf("P %08X %08X\n", p - psram, *p);
+            //if (p > psram + 1000) break;
         }
     }
     ESP.restart();
+    while(1) { yield(); };
 }
 
 dedic_gpio_bundle_handle_t bundleA, bundleB;
 
 void setup() {
     delay(1000);
-    Serial.begin(115200);
+    Serial.begin(921600);
     printf("setup()\n");
 
     const uint32_t PSRAM_ALIGN = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
@@ -209,7 +252,7 @@ void setup() {
 
     bzero(psram, psram_sz);
     bzero(dram, dram_sz);
-    if (0) {  
+    if (opt.testPins) {  
         for(auto i : pins) pinMode(i, INPUT_PULLDOWN);
         delay(100);
         printf("PD   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
@@ -228,120 +271,124 @@ void setup() {
         printf("OH   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) pinMode(i, INPUT_PULLUP);
-        do { 
+    }
+    for(auto i : pins) pinMode(i, INPUT_PULLUP);
+    while(opt.watchPins) { 
             delay(100);
             printf("PU   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
-        } while(1);
     }
-    for(auto i : pins) pinMode(i, INPUT_PULLDOWN);
+    pinMode(extSel_Pin, OUTPUT);
+    digitalWrite(extSel_Pin, 0);
 
     vector<int> outputPins = {extSel_Pin, data0Pin};
-    for(auto i : pins) {
-        pinMode(i, OUTPUT);
-        digitalWrite(i, 1);
-    }
-    if (0) { // simulate clock signal 
+    if (opt.fakeClock) { // simulate clock signal 
         pinMode(clockPin, OUTPUT);
         digitalWrite(clockPin, 0);
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
     }
-    for(int i = 0; i < 100; i++) { 
+    if (1) { 
+        int bundleA_gpios[] = {clockPin, casInh_pin, readWritePin, addr0Pin + 0, addr0Pin + 1, data0Pin + 0, data0Pin + 1, data0Pin+3};
+        dedic_gpio_bundle_config_t bundleA_config = {
+            .gpio_array = bundleA_gpios,
+            .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
+            .flags = {
+                .in_en = 1,
+                .out_en = 0
+            },
+        };
+        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleA));
+
+        if (0 ) {
+            int bundleB_gpios[] = {data0Pin, data0Pin + 1, data0Pin + 2, data0Pin + 3, data0Pin + 4, data0Pin + 5, data0Pin + 6, data0Pin + 7};
+            dedic_gpio_bundle_config_t bundleB_config = {
+            .gpio_array = bundleB_gpios,
+            .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
+            .flags = {
+                .out_en = 1
+            },
+        };
+        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleB));
+    }
+    }
+
+    for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
         uint32_t r1 = *gpio1;
         printf("%08x %08x %08x\n", r0, r1, PACK(r0, r1)); 
     }
 
-    printf("freq %.4fMhz threshold %d halfcycle %d ps_malloc() result %x, %d, %d; malloc() result %x\n", 
-        testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, psram, ESP.getFreePsram(), ESP.getPsramSize(), dram);
+    printf("freq %.4fMhz threshold %d halfcycle %d clockMask %08x\n", 
+        testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, clockMask);
     // esp_himem_get_free_size(), esp_himem_get_phys_size());
-    xTaskCreatePinnedToCore(threadFunc, "th", 2 * 1024, NULL, 0, NULL, 0);
+    xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
     delay(500);
-
-    int bundleA_gpios[] = {clockPin, 3,4,5,6,7,8,9};
-    dedic_gpio_bundle_config_t bundleA_config = {
-        .gpio_array = bundleA_gpios,
-        .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
-        .flags = {
-            .in_en = 1,
-            .out_en = 0
-        },
-    };
-    ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleA));
-
-    int bundleB_gpios[] = {40,41,42,43,44,45,46,47};
-    dedic_gpio_bundle_config_t bundleB_config = {
-        .gpio_array = bundleB_gpios,
-        .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
-        .flags = {
-            .out_en = 1
-        },
-    };
-    ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleB));
-
 }
 
+void IRAM_ATTR iloop_logicAnalyzer() {	
+    uint32_t r;
+    uint32_t *out = dram;
+    uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
+
+    for(int i = 0; i < 1000; i++) { 
+        //while((dedic_gpio_cpu_ll_read_in() & 0x1)) {}
+        //while(!(dedic_gpio_cpu_ll_read_in() & 0x1)) {}
+        while((*gpio0 & clockMask) != 0) {}; 
+        while((*gpio0 & clockMask) == 0) {}; 
+    }
+    uint32_t tsc = XTHAL_GET_CCOUNT();
+    while((*gpio1 & resetMask) == 0) {}; 
+    resetLowCycles = XTHAL_GET_CCOUNT()- tsc;
+    while(1) {
+        r = dedic_gpio_cpu_ll_read_in();
+        *out++ = r;
+        if (out == dram_end) { 
+            dramLoopCount++;
+            out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
+            dram_end = out + dma_sz / sizeof(uint32_t);
+        }
+    while(stop) {}
+    }
+}
+        
+
 void IRAM_ATTR iloop_dram() {	
-	portDISABLE_INTERRUPTS();
-	ESP_INTR_DISABLE(XT_TIMER_INTNUM);
     uint32_t startTsc = XTHAL_GET_CCOUNT();
-    static const int clockMask = 0x2;
-    uint32_t r0r, r0f;
+    uint32_t r0, r1;
     uint32_t tsc, lastTsc = XTHAL_GET_CCOUNT();
     uint32_t *out = dram;
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
     uint32_t triggerMask = 0x0003fffc;
-    bool triggered = false;
-    uint32_t r1;
+
     while(1) {
-        while(stop) {} 
-        while(((r0f = *gpio0) & clockMask)) {}
+        while((dedic_gpio_cpu_ll_read_in() & 0x1)) {}
+        while(!(dedic_gpio_cpu_ll_read_in() & 0x1)) {}
         tsc = XTHAL_GET_CCOUNT();
+        r0 = *gpio0;
         r1 = *gpio1;
-        uint32_t elapsed = tsc - lastTsc;
-        lastTsc = tsc;
-        if (elapsed > lateThresholdTicks) {
-            lateTsc = tsc; 
-            lateCount++;
-            lateIndex = out - dram;
-            if (elapsed > lateMax)  
-                lateMax = elapsed;
-            if (elapsed < lateMin)
-                lateMin = elapsed;
-        }else {
-            if (elapsed > lateMax)  
-                lateMax = elapsed;
-            //if (elapsed < lateMin)
-            //    lateMin = elapsed;
+    
+        //if ((!r1 & resetMask)) continue; 
+        if ((r1 & resetMask)) {
+            r0 |= resetCopyMask;
+        } else {
+            r0 &= ~resetCopyMask;
         }
-
-        if (!triggered && (r0f & triggerMask)) { 
-            triggered = true;
+        if (opt.histogram) { 
+            *out++ = tsc;
+        } else {
+            *out++ = r0;
         }
-
-        //while(xthal_get_ccount() - tsc < halfCycleTicks - 50) {}
-
-        while(!((r0r = *gpio0) & clockMask)) {}
-        r1 = *gpio1;
-
-        if (triggered) { 
-            if (r0r & 0x3) {
-                *out = PACK(r0f, r1);
-            } else { 
-                *out = PACK(r0f, r1);
-            }
-            //*out = tsc;
-            out++;
-            if (out == dram_end) { 
-                dramLoopCount++;
-                out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
-                dram_end = out + dma_sz / sizeof(uint32_t);
-            }
-        }                    
+        if (out == dram_end) { 
+            dramLoopCount++;
+            out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
+            dram_end = out + dma_sz / sizeof(uint32_t);
+        }
+        if(stop) {
+            dramElapsedTsc = startTsc - XTHAL_GET_CCOUNT();
+            while(1) {}
+        } 
     }
 }
-
-
 
 
 void IRAM_ATTR iloop_pbi() {	
@@ -468,9 +515,6 @@ void IRAM_ATTR iloop_timings2() {
 
 
 void loop() {
-    //j.run();
-
-
     if (1) { 
         disableCore1WDT();
         portDISABLE_INTERRUPTS();
@@ -481,6 +525,11 @@ void loop() {
     //iloop_pbi();
     //iloop_timings1();
     //iloop_timings2();
+    if (opt.logicAnalyzer) {
+        iloop_logicAnalyzer();
+    } else { 
+        iloop_dram();
+    }
     portENABLE_INTERRUPTS();
     printf("avg loop1 %.2f ticks %.2f ns maxTicks %d at #%d   loop2 %.2f ticks %.2f ns maxTicks %d  diff %.2f\n", 
         avgTicks1, avgNs1, maxElapsed1, maxElapsedIndex1, avgTicks2, avgNs2, maxElapsed2, avgNs2 - avgNs1); 
