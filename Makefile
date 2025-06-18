@@ -7,6 +7,10 @@ EXCLUDE_DIRS=${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim|${ALIBS}/PubSub
 PART_FILE=${ESP_ROOT}/tools/partitions/min_spiffs.csv
 GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 
+ESP_ROOT=${HOME}/src/esp32 
+ARDUINO_LIBS="${HOME}/src/esp32/libraries ${HOME}/Arduino/libraries"
+
+
 
 ifeq (${BOARD},esp32s3)
 	# EventsCore=0,PSRAM=opi,CDCOnBoot=cdc
