@@ -1,28 +1,14 @@
 #!/bin/bash
 # on host machine:
 # sudo apt-get install vagrant apt-cacher-ng
-if [ ! -d /vagrant ]; then 
-	vagrant init debian/bookworm64
-	vagrant up
-	vagrant plugin list | grep vagrant-scp || vagrant plugin install vagrant-scp
-	vagrant ssh -c "mkdir -p bin/ .arduino15/"
-	vagrant scp ~/bin/arduino-cli bin/arduino-cli
-	vagrant scp ~/.arduino15/staging .arduino15/
-	vagrant ssh -c /vagrant/setup.sh
+if [ ! -d /arduino ]; then 
 	exit
 fi
 
-# TODO: check if proxy is up/exists
-if [ -d /vagrant ]; then
-	echo 'Acquire::http { Proxy "http://10.0.2.2:3142"; };' | sudo tee /etc/apt/apt.conf.d/01proxy
-fi
-
-sudo usermod -a -G dialout vagrant
-sudo apt-get update
-#sudo apt-get -y upgrade; sudo apt-get -y dist-upgrade
-sudo apt-get install -y git curl build-essential 
-#bash-completion gnuplot python3 python3-pip
-#sudo apt-get install python-seriali freeglut3-dev
+echo 'Acquire::http { Proxy "http://172.17.0.1:3142"; };' | tee /etc/apt/apt.conf.d/01proxy
+ln -s /usr/share/zoneinfo/America/Los_Angeles /etc/localtime
+apt-get update
+apt-get install -yq git curl build-essential python3 
 
 mkdir -p ${HOME}/bin
 export BINDIR=${HOME}/bin
@@ -44,20 +30,22 @@ git config --global user.email "jim@vheavy.com"
 printf "Host *\n StrictHostKeyChecking no" >> ~/.ssh/config
 chmod 600 ~/.ssh/config
 
-git clone git@github.com:cowlove/esp32jimlib.git
-git clone git@github.com:cowlove/esp32csim.git
-git clone git@github.com:cowlove/makeEspArduino.git
+git clone https://github.com/cowlove/esp32jimlib
+git clone https://github.com/cowlove/esp32csim.git
+git clone https://github.com/cowlove/makeEspArduino.git
 
 
 cd ${HOME}
-SKETCH=$( echo `basename /vagrant/*.ino` | sed s/.ino// )
+SKETCH=$( echo `basename /arduino/*.ino` | sed s/.ino// )
 
-git clone git@github.com:cowlove/${SKETCH}.git
+git clone https://github.com/cowlove/${SKETCH}.git
 
 cd ${SKETCH}
 make 
 
 # makeEspArduino needs needs a preferences.txt file 
 #echo sketchbook.path=${HOME}/Arduino >> ~/.arduino15/preferences.txt
-   
- 
+
+echo Sleeping...
+while true; do sleep 1; done
+
