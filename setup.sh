@@ -1,7 +1,8 @@
 #!/bin/bash
 # on host machine:
-# sudo apt-get install vagrant apt-cacher-ng
+# sudo apt-get install docker.io apt-cacher-ng
 if [ ! -d /arduino ]; then 
+	docker run -v ${PWD}:/arduino -v ${HOME}/.arduino15/staging:/root/.arduino15/staging -it ubuntu /arduino/setup.sh
 	exit
 fi
 
@@ -13,7 +14,7 @@ apt-get install -yq git curl build-essential python3
 mkdir -p ${HOME}/bin
 export BINDIR=${HOME}/bin
 export PATH=$PATH:${HOME}/bin
-
+/root/.arduino15/staging/arduino-cli.$(uname -m) version && ln -s /root/.arduino15/staging/arduino-cli.$(uname -m) ${HOME}/bin/arduino-cli
 arduino-cli version || curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
 
 arduino-cli config init 
@@ -46,6 +47,6 @@ make
 # makeEspArduino needs needs a preferences.txt file 
 #echo sketchbook.path=${HOME}/Arduino >> ~/.arduino15/preferences.txt
 
-echo Sleeping...
+echo Sleeping to leave docker container usable...
 while true; do sleep 1; done
 

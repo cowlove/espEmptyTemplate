@@ -18,19 +18,12 @@
 #ifndef CSIM
 #endif
 
-// how to patch docker container 
-// git clone https://github.com/hathach/tinyusb.git /opt/esp/lib-builder/components/arduino_tinyusb/tinyusb
-// git -C /opt/esp/lib-builder/components/arduino_tinyusb/tinyusb checkout 72b1fc50e
-// sed -i  's/exit 1/exit 0/' tools/update-components.sh 
-// grep CONFIG_ESP_INT_WDT_CHECK_CPU1=n configs/defconfig.common || echo CONFIG_ESP_INT_WDT_CHECK_CPU1=n >> configs/defconfig.common
-
 
 #include <vector>
 using std::vector;
 
 #include "jimlib.h"
 
-// make ESP_ROOT=~/src/esp32 ARDUINO_LIBS="~/src/esp32/libraries ~/Arduino/libraries" BOARD=esp32s3 IGNORE_STATE=1 uc | tee cat.out
 
 
 // Usable pins
@@ -49,16 +42,16 @@ using std::vector;
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
 static const struct {
-   bool fakeClock     = 0;
+   bool fakeClock     = 1;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
    bool tcpSendPsram  = 0;
-   bool dumpPsram     = 1;
+   bool dumpPsram     = 0;
    bool dumpSram      = 0;   ;
    bool histogram     = 0;
    bool timingTest    = 0;
    bool logicAnalyzer = 0;
-   bool bitResponse   = 0;
+   bool bitResponse   = 1;
 } opt;
 
 //GPIO0 pins
@@ -384,6 +377,10 @@ void setup() {
             };
             ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
             REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                         //    enable DATA lines for output
+            for(int i = 0; i < sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]); i++) { 
+                gpio_set_drive_capability((gpio_num_t)bundleB_gpios[i], GPIO_DRIVE_CAP_MAX);
+            }
+
 
         }
     }
@@ -392,6 +389,7 @@ void setup() {
         digitalWrite(clockPin, 0);
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
+        gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(resetPin, INPUT_PULLDOWN);
     }
     if (opt.fakeClock) { // simulate clock signal 
