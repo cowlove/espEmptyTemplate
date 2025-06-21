@@ -72,6 +72,7 @@ typedef void *async_memcpy_context_t;
 typedef void *async_memcpy_event_t;
 static inline int esp_async_memcpy_install(void *, void *) { return 0; }
 static inline int esp_async_memcpy(void *, void *, void *, int, bool (*)(void**, void**, void*), void *) { return 0; } 
+static inline void neopixelWrite(int, int, int, int) {}
 #endif
 
 #include <vector>
@@ -97,7 +98,7 @@ using std::vector;
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
 static const struct {
-   bool fakeClock     = 0;
+   bool fakeClock     = 1;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
    bool tcpSendPsram  = 1;
@@ -108,6 +109,8 @@ static const struct {
    bool logicAnalyzer = 0;
    bool bitResponse   = 0;
 } opt;
+
+// *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46 
 
 //GPIO0 pins
 static const int      casInh_pin = 0;
@@ -123,9 +126,9 @@ static const int      readWritePin = 18;
 static const int      readWriteMask = (1 << readWritePin); 
 
 //GPIO1 pins
-static const int      resetPin = 48;
+static const int      resetPin = 47;
 static const int      resetMask = 1 << (resetPin - 32); 
-static const int      extSel_Pin = 47;
+static const int      extSel_Pin = 46;
 static const int      extSel_PortPin = extSel_Pin - 32 /* port1 pin*/;
 static const int      extSel_Mask = (1 << extSel_PortPin);
 static const int      data0Pin = 38;
@@ -139,15 +142,17 @@ static const uint32_t copyDataMask = 0xff << copyDataShift;
 
 volatile uint8_t atariRam[64 * 1024] = {0xff};
 
-// try pin 19,20 (USB d- d+ pins).  need to write MPD use pin 48.  move reset to pin 19, maybe add halt pin 20  
+// try pin 19,20 (USB d- d+ pins).  need to write MPD use pin 47.  move reset to 0,  maybe add halt pin 20  
+// pins 19,20 available 
 //
 //                  +--ROM read
 //                  | +---Clock
-//                  | | +--- ADDR                                +-- RW
-//                  | | |                                        | +-- refresh in               +--ext sel out
-//                  | | |                                        | |   +---DATA                 |  +-- RESET in 
-//                      + + + + + + + + +  +  +  +  +  +  +  +   | |   +  +  +  +  +  +  +  +   |  |  
-vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45 ,47,48};
+//                  | | +--- ADDR                               +-- RW
+//                  | | |                                       |  +-- refresh in              +--ext sel out
+//                  | | |                                       |  |   +---DATA                |  +-- RESET in 
+//                  | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
+vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
+int ledPin = 48;
 
 #define PACK(r0, r1) (((r1 & 0x0001ffc0) << 15) | ((r0 & 0x0007fffe) << 2)) 
 
@@ -184,13 +189,18 @@ static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*
     return false;
 }
 
+
+// socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = true) { 
+    neopixelWrite(ledPin, 0, 0, 8);
     wifiDisconnect();
     wifiConnect();
     WiFiClient wc;
     static const int txSize = 1024;
-    
-    int r = wc.connect("192.168.68.131", 9999);
+   
+    neopixelWrite(ledPin, 8, 0, 8);
+    //int r = wc.connect("192.168.68.131", 9999);
+    int r = wc.connect("10.250.250.240", 9999);
     printf("connect() returned %d\n", r);
     uint32_t startMs = millis();
     int count;
@@ -213,6 +223,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = true) {
             Serial.printf("."); 
             Serial.flush();
         }
+        neopixelWrite(ledPin, 0, 0, (count & 127) + 8);
         if (resetWdt) wdtReset();
         yield();
     }
@@ -253,7 +264,8 @@ void IRAM_ATTR threadFunc(void *) {
     //portDISABLE_INTERRUPTS();
     //ESP_INTR_DISABLE(XT_TIMER_INTNUM);
     //disableCore0WDT();
-
+    neopixelWrite(ledPin, 0, 8, 0); // green == ready 
+    int maxBufsUsed = 0;
     while(1) { 
         if (psramLoopCount != *drLoopCount) {
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
@@ -268,17 +280,23 @@ void IRAM_ATTR threadFunc(void *) {
                 pi = 0;
                 break;
             }
-            if (dramLoopCount - psramLoopCount >= dma_bufs) { 
+            if (*drLoopCount - psramLoopCount >= dma_bufs) { 
                 printf("esp_aync_memcpy buffer overrun psramLoopCount %d dramLoopCount %d\n", psramLoopCount, dramLoopCount);
                 break;
             }
+            if ((psramLoopCount & 15) == 1) {
+                int b = (psramLoopCount >> 4) & 127;
+                neopixelWrite(ledPin, b, b, 0);
+            }
+            if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
         }
     }
     //portENABLE_INTERRUPTS();
     //ESP_INTR_ENABLE(XT_TIMER_INTNUM);
     // DONE
     uint32_t elapsed = micros() - startUsec;
-    printf("STOPPED %.2f mB/sec\n", 1.0 * psram_sz / elapsed);
+    printf("STOPPED %.2f mB/sec, max dma bufs in use %d\n", 1.0 * psram_sz / elapsed, maxBufsUsed);
+    neopixelWrite(ledPin, 8, 0, 0);
     stop = true;
 
     startUsec = micros();
@@ -466,12 +484,13 @@ void setup() {
         digitalWrite(clockPin, 0);
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
-        gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
-        pinMode(resetPin, INPUT_PULLDOWN);
+        //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
+        pinMode(resetPin, INPUT_PULLUP);
     }
     if (opt.fakeClock) { // simulate clock signal 
         pinMode(resetPin, INPUT_PULLUP);
     }
+    pinMode(ledPin, OUTPUT);
 
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
@@ -740,20 +759,38 @@ void IRAM_ATTR iloop_timings2() {
 
 
 void loop() {
+    if (0)  { // TMP demonstrate use of usb d-/+ pins 19,20 as input, demonstrate neopixel LED
+        int toggle = 0;
+        pinMode(19, INPUT);
+        pinMode(20, INPUT);
+        pinMode(ledPin, OUTPUT);
+        while(1) {
+            Serial.printf("loop()\n");
+            Serial.flush();
+            delay(10);
+
+            neopixelWrite(ledPin, toggle * 8, digitalRead(19) * 32, digitalRead(20) * 32);
+            toggle = !toggle;
+            yield();
+            delay(10);
+        }
+    }
+
     if (1) { 
         disableCore1WDT();
         portDISABLE_INTERRUPTS();
         ESP_INTR_DISABLE(XT_TIMER_INTNUM);
         disableLoopWDT();
     }
+
+
     maxElapsed1 = maxElapsed2 = maxElapsedIndex1 = -1;
     //iloop_pbi();
     //iloop_timings1();
     //iloop_timings2();
     if (opt.bitResponse) {
         iloop_bitResponse();
-    }
-    else if (opt.timingTest) {
+    } else if (opt.timingTest) {
         while(1) { 
             iloop_timings1();
             iloop_timings2();
