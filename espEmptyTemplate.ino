@@ -110,7 +110,8 @@ static const struct {
    bool bitResponse   = 0;
 } opt;
 
-// *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46 
+// *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
+// wire refresh to pin 21 
 
 //GPIO0 pins
 static const int      casInh_pin = 0;
@@ -142,15 +143,18 @@ static const uint32_t copyDataMask = 0xff << copyDataShift;
 
 volatile uint8_t atariRam[64 * 1024] = {0xff};
 
-// try pin 19,20 (USB d- d+ pins).  need to write MPD use pin 47.  move reset to 0 so ESP32 boot doesnt get messed up by low signal   
-// pins 19,20 available 
+// TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
+// TODO: maybe eventually need to drive PBI interrupt pin 
+// TODO: so eventaully looks like: pin 0 = reset, pin 19 = casInh input, pin 20 = interrupt, pin 47 = MPD
+// TODO: although USB pins moving during ESP32 boot might cause conflict 
+// TODO: extend this generally, need to review which ESP32 pins are driven during boot or have strapping resistors   
 //
-//                  +--ROM read
-//                  | +---Clock
-//                  | | +--- ADDR                               +-- RW
-//                  | | |                                       |  +-- refresh in              +--ext sel out
-//                  | | |                                       |  |   +---DATA                |  +-- RESET in 
-//                  | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
+//                               +--casInh_ / ROM read
+//                               | +---Clock
+//                               | | +--- ADDR                               +-- RW
+//                               | | |                                       |  +-- refresh in              +--ext sel out
+//                               | | |                                       |  |   +---DATA                |  +-- RESET in 
+//                               | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
 static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
 static const int ledPin = 48;
 
