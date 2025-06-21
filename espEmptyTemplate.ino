@@ -1,3 +1,4 @@
+#ifndef CSIM
 #include <driver/gpio.h>
 #include <xtensa/hal.h>
 #include "freertos/xtensa_timer.h"
@@ -15,9 +16,58 @@
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_reg.h"
 #include <xtensa/core-macros.h>
-#ifndef CSIM
-#endif
+#else 
 
+// Bullshit fake stubs 
+#include <cstdlib>
+#define REG_WRITE(a,b) 0
+#define REG_READ(a) 0
+struct dedic_gpio_bundle_config_t {
+    int *gpio_array;
+    int array_size;
+    struct { bool in_en, out_en; } flags;
+};
+typedef void * dedic_gpio_bundle_handle_t;
+static inline void * dedic_gpio_new_bundle(void *, void *) { return NULL; }
+#define ESP_INTR_DISABLE(a) 0
+static inline void portENABLE_INTERRUPTS() {}
+static inline void portDISABLE_INTERRUPTS() {}
+static inline void enableLoopWDT() {}
+static inline void disableLoopWDT() {}
+static inline void disableCore1WDT() {}
+#define XTHAL_GET_CCOUNT() 0
+static inline int xthal_get_ccount() { return 0; }
+static inline void dedic_gpio_cpu_ll_write_all(int) {}
+static inline int dedic_gpio_cpu_ll_read_in() { return 0; }
+static inline void gpio_set_drive_capability(int, int) {}
+#define GPIO_DRIVE_CAP_MAX 0 
+#define IRAM_ATTR 
+static inline void *heap_caps_aligned_alloc(int, int sz, int) { return malloc(sz); }
+static inline int cache_hal_get_cache_line_size(int, int) { return 0; }
+static inline void xTaskCreatePinnedToCore(void (*)(void *), const char *, int, void *, int, void *, int) {}
+#define ESP_ERROR_CHECK(a) a
+#define MALLOC_CAP_32BIT 0
+#define MALLOC_CAP_INTERNAL 0
+#define MALLOC_CAP_DMA 0
+#define CACHE_LL_LEVEL_INT_MEM 0 
+#define CACHE_TYPE_DATA 0 
+#define MALLOC_CAP_SPIRAM 0
+#define MALLOC_CAP_DMA 0
+#define register 
+static int dummyReg;
+#define GPIO_IN_REG (&dummyReg)
+#define GPIO_IN1_REG (&dummyReg)
+#define GPIO_ENABLE1_REG (&dummyReg)
+#define GPIO_OUT1_REG (&dummyReg)
+struct async_memcpy_config_t { 
+    int backlog, sram_trans_align, psram_trans_align, flags;
+};
+typedef void *async_memcpy_handle_t;
+typedef void *async_memcpy_context_t;
+typedef void *async_memcpy_event_t;
+static inline int esp_async_memcpy_install(void *, void *) { return 0; }
+static inline int esp_async_memcpy(void *, void *, void *, int, bool (*)(void**, void**, void*), void *) { return 0; } 
+#endif
 
 #include <vector>
 using std::vector;
@@ -42,16 +92,16 @@ using std::vector;
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
 static const struct {
-   bool fakeClock     = 1;
+   bool fakeClock     = 0;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
-   bool tcpSendPsram  = 0;
-   bool dumpPsram     = 0;
+   bool tcpSendPsram  = 1;
+   bool dumpPsram     = 1;
    bool dumpSram      = 0;   ;
    bool histogram     = 0;
    bool timingTest    = 0;
    bool logicAnalyzer = 0;
-   bool bitResponse   = 1;
+   bool bitResponse   = 0;
 } opt;
 
 //GPIO0 pins
@@ -62,8 +112,8 @@ static const int      clockMask = (0x1 << clockPin);
 static const int      addr0Pin = 2;
 static const int      addrShift = addr0Pin;                   // bus address - pins 1-16
 static const int      addrMask = 0xffff << addrShift;  // 
-static const int      mpdPin = 21;
-static const int      mpdMask = (1 << clockPin);
+static const int      refreshPin = 21;
+static const int      refreshMask = (1 << clockPin);
 static const int      readWritePin = 18;
 static const int      readWriteMask = (1 << readWritePin); 
 
@@ -78,13 +128,20 @@ static const int      data0PortPin = data0Pin - 32;
 static const int      dataShift = data0PortPin;
 static const int      dataMask = (0xff << dataShift);
 
+static const uint32_t copyResetMask = 0x40000000;
+static const uint32_t copyDataShift = 22;
+static const uint32_t copyDataMask = 0xff << copyDataShift;
+
 volatile uint8_t atariRam[64 * 1024] = {0xff};
 
+// try pin 19,21 (USB d- d+ pins).  need to write MPD.  move reset to reg0, 
+//
 //                  +--ROM read
 //                  | +---Clock
 //                  | | +--- ADDR                                +-- RW
-//                  | | |                                        | ++++ MPD out                 +--ext sel out
+//                  | | |                                        | +-- refresh in               +--ext sel out
 //                  | | |                                        | |   +---DATA                 |  +-- RESET in 
+//                      + + + + + + + + +  +  +  +  +  +  +  +   | |   +  +  +  +  +  +  +  +   |  |  
 vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45 ,47,48};
 
 #define PACK(r0, r1) (((r1 & 0x0001ffc0) << 15) | ((r0 & 0x0007fffe) << 2)) 
@@ -113,7 +170,6 @@ int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
 volatile bool stop = false;
 volatile int clockCount = 0;
-uint32_t resetCopyMask = 0x10000000;
 
 
 JStuff j;
@@ -141,7 +197,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = true) {
             return false;
         }
         int pktLen = min(txSize, len - sent);
-        r = wc.write(buf + sent, pktLen);
+        r = wc.write((uint8_t *)(buf + sent), pktLen);
         if (r != pktLen) {
             Serial.printf("write %d returned %d\n", count, r);
             Serial.flush();
@@ -175,7 +231,7 @@ void IRAM_ATTR threadFunc(void *) {
     //while(!sendPsramTcp((char *)psram, psram_sz), true) delay(1000);
 
     volatile int *drLoopCount = &dramLoopCount;
-    const async_memcpy_config_t config {
+    async_memcpy_config_t config {
         .backlog = dma_bufs - 2,
         .sram_trans_align = 0,
         .psram_trans_align = 0,
@@ -231,7 +287,7 @@ void IRAM_ATTR threadFunc(void *) {
         uint32_t last = 0;
         printf("resetLowCycles: %d\n", resetLowCycles);
         for(uint8_t *p = (uint8_t *)dram; p < (uint8_t *)(dram + dram_sz / sizeof(uint32_t)); p++) {
-            printf("DRAM %08x %08x   ", p - (uint8_t *)dram, *p);
+            printf("DRAM %08x %08x   ", (int)(p - (uint8_t *)dram), *p);
             for(int i = 7; i >= 0; i--) 
                 printf("%c ", ((((*p) & (1 << i)) != 0) ? 'X' : '.'));
             printf("    ");
@@ -252,10 +308,10 @@ void IRAM_ATTR threadFunc(void *) {
         uint32_t lastBucket = -1;
         for(uint32_t *p = psram; p < psram + (psram_sz - dma_sz * 2) / sizeof(uint32_t); p++) {
         //for(uint32_t *p = dram; p < dram + dram_sz / sizeof(uint32_t); p++) {
-            //printf("PSRAM %08x %08x\n", (p - psram) * sizeof(uint32_t), *p - last);
+            //printf("PSRAM %08x %08x\n", (int)((p - psram) * sizeof(uint32_t)), *p - last);
             if (lastBucket != -1) {
-                unsigned int delta = *p - lastBucket;
-                delta = min(sizeof(buckets) / sizeof(buckets[0]), delta);
+                int delta = *p - lastBucket;
+                delta = min((int)(sizeof(buckets) / sizeof(buckets[0])), delta);
                 buckets[delta]++;
             }
             lastBucket = *p;
@@ -280,14 +336,15 @@ void IRAM_ATTR threadFunc(void *) {
     if (opt.dumpPsram) { 
         for(uint32_t *p = psram; p < psram + (psram_sz - dma_sz * 2) / sizeof(uint32_t); p++) {
             //printf("P %08X\n",*p);
-            //if ((*p & resetCopyMask) && !(*p &casInh_Mask))
-            //if ((*p & resetCopyMask) != 0)
+            //if ((*p & copyResetMask) && !(*p &casInh_Mask))
+            //if ((*p & copyResetMask) != 0)
             //s += sfmt("%08x\n", *p);
             if (1) { 
-                if ((*p & resetCopyMask) != 0)
-                printf("P%08x %08x %04x RST%d C%d RW%d\n", 
-                    p - psram, *p, (*p & addrMask) >> addrShift, 
-                    (*p& resetCopyMask) != 0, 
+                //if ((*p & copyResetMask) != 0)
+                printf("P%08x %08x %04x %02x RST%d C%d RW%d\n", 
+                    (int)(p - psram), *p, (*p & addrMask) >> addrShift,
+                    (*p & copyDataMask) >> copyDataShift, 
+                    (*p& copyResetMask) != 0, 
                     (*p & casInh_Mask) != 0,
                     (*p & readWriteMask) != 0);
                 //printf("P %08X %08X\n", p - psram, *p);
@@ -295,6 +352,7 @@ void IRAM_ATTR threadFunc(void *) {
             //if (p > psram + 1000) break;
             //wdtReset();
             //if (((p - psram) % 0x1000) == 0) printf("%08x\n", p - psram);
+            if (opt.tcpSendPsram) wdtReset();
         }
     }
     Serial.printf("DONE %.2f\n", millis() / 1000.0);
@@ -310,45 +368,59 @@ void setup() {
     delay(1000);
     Serial.begin(1200);
     printf("setup()\n");
+    if (1) { 
+        uint32_t val = 0x10000000;
+        uint32_t mask = 0x10000000;
+        if (!(val & mask)) { 
+            printf("WRONG\n");
+        } else { 
+            printf("RIGHT\n");
+        }
+        if ((val & mask)) { 
+            printf("RIGHT\n");
+        } else { 
+            printf("WRONG\n");
+        }
+    }
 
 
     const uint32_t PSRAM_ALIGN = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
     psram = (uint32_t *) heap_caps_aligned_alloc(64, psram_sz,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
     dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
 
-    printf("psram %08x dram %08x\n", psram, dram);
+    printf("psram %8p dram %8p\n", psram, dram);
     uint64_t mask = 0;
     for(auto i : pins) mask |= ((uint64_t)0x1) << i;
     uint32_t maskl = (uint32_t)mask;
     uint32_t maskh = (uint32_t)((mask & 0xffffffff00000000LL) >> 32);
-    printf("MASK %d %08x %08x %08x\n", pins.size(), maskl, maskh, PACK(maskl, maskh));
+    printf("MASK %d %08x %08x %08x\n", (int)pins.size(), maskl, maskh, PACK(maskl, maskh));
 
     bzero(psram, psram_sz);
     bzero(dram, dram_sz);
     if (opt.testPins) {  
         for(auto i : pins) pinMode(i, INPUT_PULLDOWN);
         delay(100);
-        printf("PD   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("PD   %08x %08x %08x\n", *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) pinMode(i, INPUT_PULLUP);
         delay(100);
-        printf("PU   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("PU   %08x %08x %08x\n", *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) pinMode(i, OUTPUT);
         for(auto i : pins) digitalWrite(i, 0);
         delay(100);
-        printf("OL   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("OL   %08x %08x %08x\n", *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) digitalWrite(i, 1);
         delay(100);
-        printf("OH   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+        printf("OH   %08x %08x %08x\n", *gpio0, *gpio1, PACK(*gpio0, *gpio1));
 
         for(auto i : pins) pinMode(i, INPUT_PULLUP);
     }
     for(auto i : pins) pinMode(i, INPUT);
     while(opt.watchPins) { 
             delay(100);
-            printf("PU   %d %08x %08x %08x\n", pins.size(), *gpio0, *gpio1, PACK(*gpio0, *gpio1));
+            printf("PU   %08x %08x %08x\n", *gpio0, *gpio1, PACK(*gpio0, *gpio1));
     }
     //pinMode(extSel_Pin, OUTPUT);
     //digitalWrite(extSel_Pin, 0);
@@ -457,7 +529,7 @@ void IRAM_ATTR iloop_logicAnalyzer() {
 }
         
 
-void IRAM_ATTR iloop_dram() {	
+void IRAM_ATTR iloop_busMonitor() {	
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     uint32_t r0, r1;
     uint32_t tsc, lastTsc = XTHAL_GET_CCOUNT();
@@ -473,10 +545,12 @@ void IRAM_ATTR iloop_dram() {
     
         //if ((r1 & resetMask) == 0) continue; 
         if ((r1 & resetMask) != 0) {
-            r0 |= resetCopyMask;
+            r0 |= copyResetMask;
         } else {
-            r0 &= ~resetCopyMask;
+            r0 &= ~copyResetMask;
         }
+        r0 &= ~copyDataMask;
+        r0 |= (r1 & dataMask) >> dataShift << copyDataShift;
         if (opt.histogram) { 
             *out++ = tsc;
         } else {
@@ -702,7 +776,7 @@ void loop() {
     } else if (opt.logicAnalyzer) {
         iloop_logicAnalyzer();
     } else { 
-        iloop_dram();
+        iloop_busMonitor();
     }
     enableLoopWDT();
     //ESP_INTR_ENABLE(XT_TIMER_INTNUM);

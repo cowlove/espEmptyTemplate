@@ -2,6 +2,7 @@
 
 if [ ! -d /arduino-esp32 ]; then 
 	git clone -b idf-release/v5.4 git@github.com:espressif/arduino-esp32
+	(cd arduino-esp32/tools && ./get.py) 
 	cp $0 arduino-esp32/
 	docker run -it -v ${PWD}/arduino-esp32:/arduino-esp32 -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --net=host espressif/esp32-arduino-lib-builder:release-v5.4 /arduino-esp32/patch_esp32_lib_builder.sh
 	exit

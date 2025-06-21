@@ -3,11 +3,12 @@ PORT ?= /dev/ttyACM0
 CHIP ?= esp32
 
 ALIBS=${HOME}/Arduino/libraries
-EXCLUDE_DIRS=${PWD}/arduino-esp32|${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim|${ALIBS}/PubSubClient/tests
+EXCLUDE_DIRS=${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim|${ALIBS}/PubSubClient/tests
 PART_FILE=${ESP_ROOT}/tools/partitions/min_spiffs.csv
 GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 
-ESP_ROOT=${HOME}/src/esp32
+ESP_ROOT=${HOME}/src/arduino-esp32
+#ESP_ROOT=${HOME}/src/esp32
 ARDUINO_LIBS="${ESP_ROOT}/libraries ${HOME}/Arduino/libraries"
 
 
@@ -37,7 +38,8 @@ CSIM_BUILD_DIR=./build/csim
 CSIM_LIBS=Arduino_CRC32 ArduinoJson Adafruit_HX711 esp32jimlib
 include ${ALIBS}/esp32csim/csim.mk
 else
-include ~/Arduino/libraries/makeEspArduino/makeEspArduino.mk
+include ${ALIBS}/makeEspArduino/makeEspArduino.mk
+#include ./makeEspArduino/makeEspArduino.mk
 endif
 
 cat:    
