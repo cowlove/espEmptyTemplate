@@ -20,8 +20,8 @@
 
 // Bullshit fake stubs 
 #include <cstdlib>
-#define REG_WRITE(a,b) 0
-#define REG_READ(a) 0
+#define REG_WRITE(a,b) { *a = b; } while(0)
+#define REG_READ(a) (*a)
 struct dedic_gpio_bundle_config_t {
     int *gpio_array;
     int array_size;
@@ -59,6 +59,11 @@ static int dummyReg;
 #define GPIO_IN1_REG (&dummyReg)
 #define GPIO_ENABLE1_REG (&dummyReg)
 #define GPIO_OUT1_REG (&dummyReg)
+#define GPIO_OUT1_W1TS_REG (&dummyReg)
+#define GPIO_OUT1_W1TC_REG (&dummyReg)
+#define GPIO_ENABLE1_W1TS_REG (&dummyReg)
+#define GPIO_ENABLE1_W1TC_REG (&dummyReg)
+
 struct async_memcpy_config_t { 
     int backlog, sram_trans_align, psram_trans_align, flags;
 };
@@ -77,7 +82,7 @@ using std::vector;
 
 
 // Usable pins
-// 0-18 22            (20)
+// 0-18 21            (20)
 // 38-48 (6-16)     (11)
 //pin 01234567890123456789012345678901
 //    11111111111111111110001000000000
@@ -134,7 +139,7 @@ static const uint32_t copyDataMask = 0xff << copyDataShift;
 
 volatile uint8_t atariRam[64 * 1024] = {0xff};
 
-// try pin 19,21 (USB d- d+ pins).  need to write MPD.  move reset to reg0, 
+// try pin 19,20 (USB d- d+ pins).  need to write MPD use pin 48.  move reset to pin 19, maybe add halt pin 20  
 //
 //                  +--ROM read
 //                  | +---Clock
@@ -605,46 +610,31 @@ void IRAM_ATTR iloop_bitResponse() {
     }
 }
 
+// TODO shadow writes to ROM areas into atariRam[] so we can later reference PORTB bank bits 
+// TODO need to eventually manage the MPD output bit 
+    
 void IRAM_ATTR iloop_pbi() {	
-    while(0) {
-        while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}
-        REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
-        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}
-        REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask);
-    }
-
-    while(0) { 
-        while((*gpio0 & clockMask) != clockMask) {}              
-        REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
-        while((*gpio0 & clockMask) == clockMask) {}              
-        REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask);
-    }
-
     uint32_t r0, r1;
     int ram = 0;
     uint32_t tscRise, tscFall, tscDataReady;
 
-    while(1) {
-        while(stop) {} 
+    while(!stop) {
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         tscFall = XTHAL_GET_CCOUNT();
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                             // stop driving data lines                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
-        r0 = REG_READ(GPIO_IN_REG);
-        uint16_t addr = (r0 & addrMask) >> addrShift;                           // read address, RW flag and casInh_  from bus 
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+        r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
+        uint16_t addr = (r0 & addrMask) >> addrShift;                            
         
-        //REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);                           // drive EXTSEL low  
-        if (!(r0 & readWriteMask)) {                                            // 1. READ        
-            dedic_gpio_cpu_ll_write_all(atariRam[addr]);                        //    output data to data bus
-            REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask);                         //    enable DATA lines for output
-            tscRise = XTHAL_GET_CCOUNT();
-            tickCount++;
-        } else {                                                                // 2. WRITE 
-            atariRam[0] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;     //    get write data from bus, write to local RAM 
-        }
-        
-        //REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask |~0);                       //    release EXTSEL  
-        dedic_gpio_cpu_ll_write_all(0);
+        if ((r0 & (refreshMask | casInh_Mask)) == 0)                                // ignore refresh or ROM access 
+            continue;
+
+        if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
+            REG_WRITE(GPIO_OUT1_REG, (atariRam[addr] << addrShift) | extSel_Mask);  //    output data to data bus
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
+        } else {                                                                    // 2. WRITE 
+            atariRam[0] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
+        }        
     }
 }
 
