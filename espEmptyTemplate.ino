@@ -142,7 +142,7 @@ static const uint32_t copyDataMask = 0xff << copyDataShift;
 
 volatile uint8_t atariRam[64 * 1024] = {0xff};
 
-// try pin 19,20 (USB d- d+ pins).  need to write MPD use pin 47.  move reset to 0,  maybe add halt pin 20  
+// try pin 19,20 (USB d- d+ pins).  need to write MPD use pin 47.  move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // pins 19,20 available 
 //
 //                  +--ROM read
@@ -151,8 +151,8 @@ volatile uint8_t atariRam[64 * 1024] = {0xff};
 //                  | | |                                       |  +-- refresh in              +--ext sel out
 //                  | | |                                       |  |   +---DATA                |  +-- RESET in 
 //                  | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
-vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
-int ledPin = 48;
+static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
+static const int ledPin = 48;
 
 #define PACK(r0, r1) (((r1 & 0x0001ffc0) << 15) | ((r0 & 0x0007fffe) << 2)) 
 
@@ -873,3 +873,7 @@ class SketchCsim : public Csim_Module {
 // $D400 ANTIC
 
 // need PBI lines casInh_, WRT, phi2, ADDR0-15, DATA0-7, EXTSEL
+
+// NOTES:
+// 8-pin i2c io expander: https://media.digikey.com/pdf/Data%20Sheets/NXP%20PDFs/PCF8574(A).pdf
+// TODO: verify polarity of RW, MPD, casInh, etc 
