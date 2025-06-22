@@ -17,66 +17,8 @@
 #include "soc/gpio_reg.h"
 #include <xtensa/core-macros.h>
 #else 
-
-// Bullshit fake stubs 
-#include <cstdlib>
-#define REG_WRITE(a,b) { *a = b; } while(0)
-#define REG_READ(a) (*a)
-struct dedic_gpio_bundle_config_t {
-    int *gpio_array;
-    int array_size;
-    struct { bool in_en, out_en; } flags;
-};
-typedef void * dedic_gpio_bundle_handle_t;
-static inline void * dedic_gpio_new_bundle(void *, void *) { return NULL; }
-#define ESP_INTR_DISABLE(a) 0
-static inline void portENABLE_INTERRUPTS() {}
-static inline void portDISABLE_INTERRUPTS() {}
-static inline void enableLoopWDT() {}
-static inline void disableLoopWDT() {}
-static inline void disableCore1WDT() {}
-#define XTHAL_GET_CCOUNT() 0
-static inline int xthal_get_ccount() { return 0; }
-static inline void dedic_gpio_cpu_ll_write_all(int) {}
-static inline int dedic_gpio_cpu_ll_read_in() { return 0; }
-static inline void gpio_set_drive_capability(int, int) {}
-#define GPIO_DRIVE_CAP_MAX 0 
-#define IRAM_ATTR 
-static inline void *heap_caps_aligned_alloc(int, int sz, int) { return malloc(sz); }
-static inline int cache_hal_get_cache_line_size(int, int) { return 0; }
-static inline void xTaskCreatePinnedToCore(void (*)(void *), const char *, int, void *, int, void *, int) {}
-#define ESP_ERROR_CHECK(a) a
-#define MALLOC_CAP_32BIT 0
-#define MALLOC_CAP_INTERNAL 0
-#define MALLOC_CAP_DMA 0
-#define CACHE_LL_LEVEL_INT_MEM 0 
-#define CACHE_TYPE_DATA 0 
-#define MALLOC_CAP_SPIRAM 0
-#define MALLOC_CAP_DMA 0
-#define register 
-static int dummyReg;
-#define GPIO_IN_REG (&dummyReg)
-#define GPIO_IN1_REG (&dummyReg)
-#define GPIO_ENABLE1_REG (&dummyReg)
-#define GPIO_OUT1_REG (&dummyReg)
-#define GPIO_OUT1_W1TS_REG (&dummyReg)
-#define GPIO_OUT1_W1TC_REG (&dummyReg)
-#define GPIO_ENABLE1_W1TS_REG (&dummyReg)
-#define GPIO_ENABLE1_W1TC_REG (&dummyReg)
-
-struct async_memcpy_config_t { 
-    int backlog, sram_trans_align, psram_trans_align, flags;
-};
-typedef void *async_memcpy_handle_t;
-typedef void *async_memcpy_context_t;
-typedef void *async_memcpy_event_t;
-static inline int esp_async_memcpy_install(void *, void *) { return 0; }
-static inline int esp_async_memcpy(void *, void *, void *, int, bool (*)(void**, void**, void*), void *) { return 0; } 
-static inline void neopixelWrite(int, int, int, int) {}
+#include "esp32csim.h"
 #endif
-
-#include <vector>
-using std::vector;
 
 #include "jimlib.h"
 
@@ -141,7 +83,7 @@ static const uint32_t copyResetMask = 0x40000000;
 static const uint32_t copyDataShift = 22;
 static const uint32_t copyDataMask = 0xff << copyDataShift;
 
-volatile uint8_t atariRam[64 * 1024] = {0xff};
+uint8_t atariRam[64 * 1024] = {0xff};
 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
@@ -247,8 +189,6 @@ void threadFunc2(void *) {
 void IRAM_ATTR threadFunc(void *) { 
     printf("threadFunc() start\n");
     int pi = 0;
-    //j.begin(); 
-    //while(!sendPsramTcp((char *)psram, psram_sz), true) delay(1000);
 
     volatile int *drLoopCount = &dramLoopCount;
     async_memcpy_config_t config {
@@ -410,8 +350,7 @@ void setup() {
         }
     }
 
-
-    const uint32_t PSRAM_ALIGN = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
+    //const uint32_t PSRAM_ALIGN = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
     psram = (uint32_t *) heap_caps_aligned_alloc(64, psram_sz,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
     dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
 
@@ -449,8 +388,6 @@ void setup() {
             delay(100);
             printf("PU   %08x %08x %08x\n", *gpio0, *gpio1, PACK(*gpio0, *gpio1));
     }
-    //pinMode(extSel_Pin, OUTPUT);
-    //digitalWrite(extSel_Pin, 0);
 
     vector<int> outputPins = {extSel_Pin, data0Pin};
     if (1) { 
@@ -495,6 +432,8 @@ void setup() {
         pinMode(resetPin, INPUT_PULLUP);
     }
     pinMode(ledPin, OUTPUT);
+    //pinMode(extSel_Pin, OUTPUT);
+    //digitalWrite(extSel_Pin, 0);
 
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
