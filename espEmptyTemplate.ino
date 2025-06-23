@@ -1,28 +1,29 @@
 #ifndef CSIM
-#include <driver/gpio.h>
-#include <xtensa/hal.h>
-#include "freertos/xtensa_timer.h"
-#include "esp_intr_alloc.h"
-#include "rtc_wdt.h" .
+#include <esp_intr_alloc.h>
+#include <rtc_wdt.h>
+#include <esp_task_wdt.h>
+#include <esp_async_memcpy.h>
 #include "soc/timer_group_struct.h"
 #include "soc/timer_group_reg.h"
-#include "esp_task_wdt.h"
-#include <esp_async_memcpy.h>
-#include <hal/cache_hal.h>
-#include <hal/cache_ll.h>
-
-#include <driver/dedic_gpio.h>
-#include <hal/dedic_gpio_cpu_ll.h>
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_reg.h"
+#include <rtc_wdt.h>
+#include <hal/cache_hal.h>
+#include <hal/cache_ll.h>
+#include <hal/dedic_gpio_cpu_ll.h>
 #include <xtensa/core-macros.h>
+#include <xtensa/hal.h>
+#include <driver/gpio.h>
+#include <driver/dedic_gpio.h>
+#include <freertos/xtensa_timer.h>
+#include <freertos/xtensa_rtos.h>
+
+
+
 #else 
 #include "esp32csim.h"
 #endif
-
 #include "jimlib.h"
-
-
 
 // Usable pins
 // 0-18 21            (20)
@@ -39,14 +40,15 @@
 //GPIO0 bits: TODO rearrange bits so addr is in low bits and avoids needed a shift
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
+unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
    bool fakeClock     = 1;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
-   bool tcpSendPsram  = 1;
-   bool dumpPsram     = 1;
+   bool tcpSendPsram  = 0;
+   bool dumpPsram     = 0;
    bool dumpSram      = 0;   ;
-   bool histogram     = 0;
+   bool histogram     = 1;
    bool timingTest    = 0;
    bool logicAnalyzer = 0;
    bool bitResponse   = 0;
@@ -54,6 +56,16 @@ static const struct {
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
 // wire refresh to pin 21 
+
+struct Pin {
+    int gpionum;
+    int bitlen;
+    inline const int regRd() { return gpionum > 31 ? GPIO_IN1_REG : GPIO_IN_REG; }
+    inline const int regWr() { return gpionum > 31 ? GPIO_IN1_REG : GPIO_IN_REG; }
+    Pin(int n, int len = 1) : gpionum(n), bitlen(len) {}
+    uint32_t const mask() { return ((1 << bitlen) - 1) << shift(); }
+    int const shift() { return gpionum & 31; }
+};
 
 //GPIO0 pins
 static const int      casInh_pin = 0;
@@ -107,11 +119,10 @@ volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
 static const int dma_sz = 4096 - 64;
-static const int dma_bufs = 32; // must be power of 2
+static const int dma_bufs = 8; // must be power of 2
 static const int dram_sz = dma_sz * dma_bufs;
 
 uint32_t *dram;
-volatile uint32_t buf;
 static const int testFreq = 1.8 * 1000000;//1000000;
 static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
@@ -119,22 +130,28 @@ static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
 int dramLoopCount = 0;
-volatile int resetLowCycles = 0;
+int resetLowCycles = 0;
 int psramLoopCount = 0;
 int lateCount = 0;
 int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
 volatile bool stop = false;
-volatile int clockCount = 0;
-
+dedic_gpio_bundle_handle_t bundleIn, bundleOut;
 
 JStuff j;
+
+volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
+int maxElapsed1 = 0, maxElapsed2 = 0;
+int maxElapsedIndex1 = 0;
+void iloop_timings1();
+void iloop_timings2();
+
+int maxLoopElapsed, minLoopElapsed, loopElapsedLate = 0;
 
 static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*, void*) {
     cbCount++;
     return false;
 }
-
 
 // socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = true) { 
@@ -178,16 +195,9 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = true) {
     return true;
 }
 
-volatile int tickCount = 0;
-void threadFunc2(void *) {
-    while(1) {  
-        printf("tickCount %d\n", tickCount);
-        tickCount = 0;
-        delay(1000);
-    }
-}
 void IRAM_ATTR threadFunc(void *) { 
     printf("threadFunc() start\n");
+    neopixelWrite(ledPin, 0, 8, 0);
     int pi = 0;
 
     volatile int *drLoopCount = &dramLoopCount;
@@ -207,16 +217,35 @@ void IRAM_ATTR threadFunc(void *) {
     
     //portDISABLE_INTERRUPTS();
     //ESP_INTR_DISABLE(XT_TIMER_INTNUM);
-    //disableCore0WDT();
-    neopixelWrite(ledPin, 0, 8, 0); // green == ready 
+    //neopixelWrite(ledPin, 0, 8, 0); // green == ready 
     int maxBufsUsed = 0;
+
+#if 0 
+    uint32_t oldint;
+    disableCore0WDT();
+    portDISABLE_INTERRUPTS();
+    XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
+    _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
+    __asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
+#endif
+    XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
+    //_xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
+
     while(1) { 
         if (psramLoopCount != *drLoopCount) {
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
-            if (esp_async_memcpy(handle, (void *)(psram + pi), (void *)dma_buf, dma_sz, 
-                async_memcpy_callback, NULL) != ESP_OK) { 
-                printf("esp_asyn_memcpy() error, psramLoopCount %d/%d\n", psramLoopCount, psram_sz / dma_sz);
-                break;
+            if (1) {
+                if (*drLoopCount - psramLoopCount >= dma_bufs - 2) { 
+                    printf("esp_aync_memcpy buffer overrun psramLoopCount %d dramLoopCount %d\n", psramLoopCount, dramLoopCount);
+                    break;
+                }
+                if (esp_async_memcpy(handle, (void *)(psram + pi), (void *)dma_buf, dma_sz, 
+                    async_memcpy_callback, NULL) != ESP_OK) { 
+                    printf("esp_asyn_memcpy() error, psramLoopCount %d/%d\n", psramLoopCount, psram_sz / dma_sz);
+                    break;
+                }   
+            } else { // fake dma writes 
+                cbCount++;
             } 
             pi = pi + dma_sz / sizeof(uint32_t);
             psramLoopCount++; 
@@ -224,20 +253,22 @@ void IRAM_ATTR threadFunc(void *) {
                 pi = 0;
                 break;
             }
-            if (*drLoopCount - psramLoopCount >= dma_bufs) { 
-                printf("esp_aync_memcpy buffer overrun psramLoopCount %d dramLoopCount %d\n", psramLoopCount, dramLoopCount);
-                break;
-            }
-            if ((psramLoopCount & 15) == 1) {
+            if ((psramLoopCount & 127) == 1) {
                 int b = (psramLoopCount >> 4) & 127;
-                neopixelWrite(ledPin, b, b, 0);
+                //neopixelWrite(ledPin, b, b, 0);
             }
             if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
+        } else {
+            //delay(1);
         }
     }
-    //portENABLE_INTERRUPTS();
-    //ESP_INTR_ENABLE(XT_TIMER_INTNUM);
-    // DONE
+
+#if 0 
+    _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi; 
+    portENABLE_INTERRUPTS();
+    enableCore0WDT();
+#endif
+
     uint32_t elapsed = micros() - startUsec;
     printf("STOPPED %.2f mB/sec, max dma bufs in use %d\n", 1.0 * psram_sz / elapsed, maxBufsUsed);
     neopixelWrite(ledPin, 8, 0, 0);
@@ -247,8 +278,9 @@ void IRAM_ATTR threadFunc(void *) {
     while(cbCount < psramLoopCount && micros() - startUsec < 1000000) {
         delay(50);
     }
-    printf("\n\n\ncb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dramLoop %d psramLoop %d clockCount %d\n", 
-        cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  dramLoopCount, psramLoopCount, clockCount);
+    printf("\n\n\ncb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dramLoop %d psramLoop %d minLoop %d maxLoop %d jit %d late %d\n", 
+        cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  dramLoopCount, psramLoopCount, minLoopElapsed, 
+        maxLoopElapsed, maxLoopElapsed - minLoopElapsed, loopElapsedLate);
  
     if (opt.dumpSram) {
         uint32_t last = 0;
@@ -270,12 +302,11 @@ void IRAM_ATTR threadFunc(void *) {
 
     if (opt.histogram) { 
         int first = -1, last;
-        int buckets[256];
+        static int buckets[512];
         bzero(buckets, sizeof(buckets));
         uint32_t lastBucket = -1;
         for(uint32_t *p = psram; p < psram + (psram_sz - dma_sz * 2) / sizeof(uint32_t); p++) {
         //for(uint32_t *p = dram; p < dram + dram_sz / sizeof(uint32_t); p++) {
-            //printf("PSRAM %08x %08x\n", (int)((p - psram) * sizeof(uint32_t)), *p - last);
             if (lastBucket != -1) {
                 int delta = *p - lastBucket;
                 delta = min((int)(sizeof(buckets) / sizeof(buckets[0])), delta);
@@ -283,7 +314,15 @@ void IRAM_ATTR threadFunc(void *) {
             }
             lastBucket = *p;
         }
+        int firstBucket = 0;
+        lastBucket = 0;
         for(int i = 0; i < sizeof(buckets) / sizeof(buckets[0]); i++) { 
+            if (buckets[i] > 0) lastBucket = i;
+        }
+        for(int i = sizeof(buckets) / sizeof(buckets[0]) - 1; i >= 0 ;i--) { 
+            if (buckets[i] > 0) firstBucket = i;
+        }
+        for(int i = firstBucket; i <= lastBucket; i++) { 
             printf("%d %d BUCKETS\n", i, buckets[i]);
             if (buckets[i] > 0) { 
                 if (first == -1) first = i;
@@ -330,7 +369,6 @@ void IRAM_ATTR threadFunc(void *) {
     while(1) { yield(); };
 }
 
-dedic_gpio_bundle_handle_t bundleIn, bundleOut;
 void setup() {
     delay(1000);
     Serial.begin(1200);
@@ -432,6 +470,7 @@ void setup() {
         pinMode(resetPin, INPUT_PULLUP);
     }
     pinMode(ledPin, OUTPUT);
+    digitalWrite(ledPin, 1);
     //pinMode(extSel_Pin, OUTPUT);
     //digitalWrite(extSel_Pin, 0);
 
@@ -443,7 +482,7 @@ void setup() {
 
     printf("freq %.4fMhz threshold %d halfcycle %d clockMask %08x\n", 
         testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, clockMask);
-    // esp_himem_get_free_size(), esp_himem_get_phys_size());
+
     xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
     delay(500);
 }
@@ -499,18 +538,22 @@ void IRAM_ATTR iloop_logicAnalyzer() {
 void IRAM_ATTR iloop_busMonitor() {	
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     uint32_t r0, r1;
-    uint32_t tsc, lastTsc = XTHAL_GET_CCOUNT();
+    uint32_t tsc, lastTsc;
+    uint32_t loopCount = 0;
     uint32_t *out = dram;
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
-
+    minLoopElapsed = 0xffff;
+    maxLoopElapsed = 0;
     while(!stop) {
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {} // wait falling edge 
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {} // wait rising edge 
-        tsc = XTHAL_GET_CCOUNT();
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+          tsc = XTHAL_GET_CCOUNT();
         r0 = REG_READ(GPIO_IN_REG);
         r1 = REG_READ(GPIO_IN1_REG);
     
-        //if ((r1 & resetMask) == 0) continue; 
         if ((r1 & resetMask) != 0) {
             r0 |= copyResetMask;
         } else {
@@ -528,6 +571,12 @@ void IRAM_ATTR iloop_busMonitor() {
             out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
             dram_end = out + dma_sz / sizeof(uint32_t);
         }
+        if (loopCount++ > 5) {
+            uint32_t elapsed = tsc - lastTsc;
+            if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
+            if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
+        } 
+        lastTsc = tsc;
     }
     dramElapsedTsc = startTsc - XTHAL_GET_CCOUNT();
 }
@@ -600,11 +649,6 @@ void IRAM_ATTR iloop_pbi() {
     }
 }
 
-uint8_t drambytes[255];
-volatile uint32_t dummy = 0;
-volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
-int maxElapsed1 = 0, maxElapsed2 = 0;
-int maxElapsedIndex1 = 0;
 void IRAM_ATTR iloop_timings1() {
     static const int iterations = 1000000; 
     uint32_t startTsc = xthal_get_ccount();
@@ -613,6 +657,9 @@ void IRAM_ATTR iloop_timings1() {
     for(int i = 0; i < iterations; i++) { // loop overhead 4 cycles 
 
         XTHAL_GET_CCOUNT();                      // 1 cycle
+        //neopixelWrite(ledPin, 8, 0, 8);          // 20000 cycles
+
+#if 0
         REG_READ(GPIO_IN_REG);                   //    18 cycles 
         REG_WRITE(GPIO_OUT1_REG, 0x1);           //    15 cycles
        // *gpio0 = 0x1;                          //    15 cycles 
@@ -659,7 +706,6 @@ void IRAM_ATTR iloop_timings1() {
         //psram[i] =  dedic_gpio_cpu_ll_read_in();   // can run at about 620ns loop without blocking psram
         //drambytes[i & 0xff] = dedic_gpio_cpu_ll_read_in();           // 5-6 cycles, could prob do a 30Mhz loop 
         //drambytes[(i + 1) & 0xff] = 0;
-#if 0
         //r = *gpio0;
         while(!(r = *gpio0) & (1 << 17)) {}                                          // read addr, rw, clk, casInh                                                      //  75.0
         if ((r & casInh_Mask))                                                      // 12.5
@@ -700,7 +746,6 @@ void IRAM_ATTR iloop_timings2() {
     avgNs2 = avgTicks2 / 240 * 1000;
 }
 
-
 void loop() {
     if (0)  { // TMP demonstrate use of usb d-/+ pins 19,20 as input, demonstrate neopixel LED
         int toggle = 0;
@@ -708,10 +753,6 @@ void loop() {
         pinMode(20, INPUT);
         pinMode(ledPin, OUTPUT);
         while(1) {
-            Serial.printf("loop()\n");
-            Serial.flush();
-            delay(10);
-
             neopixelWrite(ledPin, toggle * 8, digitalRead(19) * 32, digitalRead(20) * 32);
             toggle = !toggle;
             yield();
@@ -719,18 +760,13 @@ void loop() {
         }
     }
 
-    if (1) { 
-        disableCore1WDT();
-        portDISABLE_INTERRUPTS();
-        ESP_INTR_DISABLE(XT_TIMER_INTNUM);
-        disableLoopWDT();
-    }
-
+    portDISABLE_INTERRUPTS();
+    uint32_t oldint;
+    XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
+    //_xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi;  // saves 5 cycles, could save more 
+    __asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
 
     maxElapsed1 = maxElapsed2 = maxElapsedIndex1 = -1;
-    //iloop_pbi();
-    //iloop_timings1();
-    //iloop_timings2();
     if (opt.bitResponse) {
         iloop_bitResponse();
     } else if (opt.timingTest) {
@@ -755,7 +791,7 @@ void loop() {
     printf("avg loop1 %.2f ticks %.2f ns maxTicks %d at #%d   loop2 %.2f ticks %.2f ns maxTicks %d  diff %.2f\n", 
         avgTicks1, avgNs1, maxElapsed1, maxElapsedIndex1, avgTicks2, avgNs2, maxElapsed2, avgNs2 - avgNs1); 
     delay(100);
-    while(1) { yield();  wdtReset(); }
+    while(1) { yield(); }
 }
 
 #ifdef CSIM
@@ -820,3 +856,29 @@ class SketchCsim : public Csim_Module {
 // NOTES:
 // 8-pin i2c io expander: https://media.digikey.com/pdf/Data%20Sheets/NXP%20PDFs/PCF8574(A).pdf
 // TODO: verify polarity of RW, MPD, casInh, etc 
+
+
+#if 0 
+CONFIG_SOC_WDT_SUPPORTED=n
+CONFIG_BOOTLOADER_WDT_ENABLE=n
+CONFIG_ESP_INT_WDT=n
+CONFIG_ESP_TASK_WDT_EN=n
+CONFIG_ESP_TASK_WDT_INIT=n
+CONFIG_ESP_TASK_WDT_PANIC=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_INT_WDT=n
+CONFIG_INT_WDT_CHECK_CPU1=n
+CONFIG_INT_WDT_CHECK_CPU0=n
+CONFIG_TASK_WDT=n
+CONFIG_ESP_TASK_WDT=n
+CONFIG_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+CONFIG_SOC_XT_WDT_SUPPORTED=n
+CONFIG_SOC_WDT_SUPPORTED=n
+CONFIG_ESP_ROM_HAS_HAL_WDT=n
+CONFIG_HAL_WDT_USE_ROM_IMPL=n
+
+"/home/jim/src/arduino-esp32/tools/xtensa-esp-elf/bin/xtensa-esp32s3-elf-g++"  -MMD -c "@/home/jim/src/arduino-esp32/tools/esp32-arduino-libs/esp32s3/flags/cpp_flags" -w -Os -Werror=return-type -DF_CPU=240000000L -DARDUINO=10605 -DARDUINO_ESP32S3_DEV -DARDUINO_ARCH_ESP32 -DARDUINO_BOARD=\"ESP32S3_DEV\" -DARDUINO_VARIANT=\"esp32s3\" -DARDUINO_PARTITION_default -DARDUINO_HOST_OS=\"Linux\" -DARDUINO_FQBN=\"generic\" -DESP32=ESP32 -DCORE_DEBUG_LEVEL=0    -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1 -DARDUINO_USB_MSC_ON_BOOT=0 -DARDUINO_USB_DFU_ON_BOOT=0  -DBOARD_HAS_PSRAM  -DGIT_VERSION=\""432271-dirty"\" -Ofast "@/home/jim/src/arduino-esp32/tools/esp32-arduino-libs/esp32s3/flags/defines" "-I/home/jim/src/espEmptyTemplate/" -iprefix "/home/jim/src/arduino-esp32/tools/esp32-arduino-libs/esp32s3/include/" "@/home/jim/src/arduino-esp32/tools/esp32-arduino-libs/esp32s3/flags/includes" "-I/home/jim/src/arduino-esp32/tools/esp32-arduino-libs/esp32s3/qio_opi/include"  -I/home/jim/src/arduino-esp32/cores/esp32 -I/home/jim/src/arduino-esp32/variants/esp32s3 -I/tmp/mkESP/espEmptyTemplate_esp32s3 -I/home/jim/src/espEmptyTemplate -I/home/jim/src/arduino-esp32/libraries/LittleFS/src -I/home/jim/src/arduino-esp32/libraries/ESPmDNS/src -I/home/jim/src/arduino-esp32/libraries/HTTPClient/src -I/home/jim/src/arduino-esp32/libraries/Wire/src -I/home/jim/src/arduino-esp32/libraries/NetworkClientSecure/src -I/home/jim/src/arduino-esp32/libraries/FS/src -I/home/jim/src/arduino-esp32/libraries/ArduinoOTA/src -I/home/jim/src/arduino-esp32/libraries/Update/src -I/home/jim/src/arduino-esp32/libraries/Network/src -I/home/jim/src/arduino-esp32/libraries/WiFi/src -I/home/jim/Arduino/libraries/DHT_sensor_library -I/home/jim/Arduino/libraries/PubSubClient/src -I/home/jim/Arduino/libraries/Adafruit_Unified_Sensor -I/home/jim/Arduino/libraries/Arduino_CRC32/src -I/home/jim/Arduino/libraries/OneWireNg/src -I/home/jim/Arduino/libraries/OneWireNg/src/platform -I/home/jim/Arduino/libraries/Adafruit_HX711 -I/home/jim/Arduino/libraries/ArduinoJson -I/home/jim/Arduino/libraries/ArduinoJson/src -I/home/jim/Arduino/libraries/ArduinoJson/extras/tests/Helpers -I/home/jim/Arduino/libraries/ArduinoJson/extras/tests/Helpers/api -I/home/jim/Arduino/libraries/ArduinoJson/extras/tests/Helpers/avr -I/home/jim/Arduino/libraries/esp32jimlib/src "@/tmp/mkESP/espEmptyTemplate_esp32s3/build_opt.h" "@/tmp/mkESP/espEmptyTemplate_esp32s3/file_opts"    /tmp/mkESP/espEmptyTemplate_esp32s3/espEmptyTemplate.ino.cpp -S /tmp/asm.S
+
+#endif
