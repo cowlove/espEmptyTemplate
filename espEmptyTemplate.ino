@@ -127,7 +127,7 @@ uint32_t *dram;
 static const int testFreq = 1.8 * 1000000;//1000000;
 static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
-static const float histRunSec = 300.0;
+static const float histRunSec = 30.0;
 
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
@@ -137,9 +137,9 @@ int psramLoopCount = 0;
 int lateCount = 0;
 int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
-volatile bool stop = false;
+bool stop = false;
 dedic_gpio_bundle_handle_t bundleIn, bundleOut;
-uint32_t lastAddr;
+uint32_t lastAddr = -1;
 
 JStuff j;
 
@@ -351,6 +351,7 @@ void IRAM_ATTR threadFunc(void *) {
     }
 
     stop = true;
+    int maxLoopE = maxLoopElapsed, minLoopE = minLoopElapsed;
     startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 24 * 1000000) {}
 
@@ -368,8 +369,8 @@ void IRAM_ATTR threadFunc(void *) {
         delay(50);
     }
     printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dramLoop %d psramLoop %d minLoop %d maxLoop %d jit %d late %d\n", 
-        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  dramLoopCount, psramLoopCount, minLoopElapsed, 
-        maxLoopElapsed, maxLoopElapsed - minLoopElapsed, loopElapsedLate);
+        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  dramLoopCount, psramLoopCount, minLoopE, 
+        maxLoopE, maxLoopE - minLoopE, loopElapsedLate);
  
     if (opt.dumpSram) {
         uint32_t last = 0;
@@ -725,12 +726,13 @@ void IRAM_ATTR iloop_pbi() {
     minLoopElapsed = 0xffff;
     maxLoopElapsed = 0;
     int elapsed = 0;
-    while(!stop) {
+    while(1) {
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         tsc = XTHAL_GET_CCOUNT();
     
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+        //if (stop) break;
         if (bank == &banks[0]) {
             bank = &banks[256];
         } else { 
@@ -751,7 +753,6 @@ void IRAM_ATTR iloop_pbi() {
                 } else {
                     loopCount++;
                 }
-                //if (stop) break;
                 uint8_t data;
                 if ((addr & bankMask) == bankVal) { 
                     data = bank[addr & ~bankMask];
@@ -786,9 +787,33 @@ void IRAM_ATTR iloop_timings1() {
 
         XTHAL_GET_CCOUNT();                      // 1 cycle
         //neopixelWrite(ledPin, 8, 0, 8);          // 20000 cycles
+        //REG_WRITE(GPIO_ENABLE_W1TC, 0x1);
+        __asm__ __volatile__("nop"); // 1 cycle
+        REG_WRITE(GPIO_OUT_REG, 0x1);                   //    18 cycles 
+        __asm__ __volatile__("nop"); // 1 cycle
+        dedic_gpio_cpu_ll_read_in();
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
+        __asm__ __volatile__("nop"); // 1 cycle
 
-#if 0
-        REG_READ(GPIO_IN_REG);                   //    18 cycles 
+        #if 0
         REG_WRITE(GPIO_OUT1_REG, 0x1);           //    15 cycles
        // *gpio0 = 0x1;                          //    15 cycles 
         REG_READ(GPIO_IN_REG);                   //    18 cycles
@@ -920,7 +945,7 @@ void loop() {
     }
     while(1) {}
     //enableLoopWDT();
-    //portENABLE_INTERRUPTS();
+    portENABLE_INTERRUPTS();
     delay(200);
     printf("avg loop1 %.2f ticks %.2f ns maxTicks %d at #%d   loop2 %.2f ticks %.2f ns maxTicks %d  diff %.2f\n", 
         avgTicks1, avgNs1, maxElapsed1, maxElapsedIndex1, avgTicks2, avgNs2, maxElapsed2, avgNs2 - avgNs1); 
