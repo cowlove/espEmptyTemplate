@@ -42,18 +42,18 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-   bool fakeClock     = 1;
+   bool fakeClock     = 0;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
-   bool tcpSendPsram  = 0;
+   bool tcpSendPsram  = 1;
    bool dumpPsram     = 0;
    bool dumpSram      = 0;   ;
-   bool histogram     = 1;
+   bool histogram     = 0;
    bool timingTest    = 0;
    bool logicAnalyzer = 0;
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
-   bool maskCore0Int  = 1;
+   bool maskCore0Int  = 0;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -78,14 +78,14 @@ static const int      addr0Pin = 2;
 static const int      addrShift = addr0Pin;                   // bus address - pins 1-16
 static const int      addrMask = 0xffff << addrShift;  // 
 static const int      refreshPin = 21;
-static const int      refreshMask = (1 << clockPin);
+static const int      refreshMask = (1 << refreshPin);
 static const int      readWritePin = 18;
 static const int      readWriteMask = (1 << readWritePin); 
 
 //GPIO1 pins
-static const int      resetPin = 47;
+static const int      resetPin = 46;
 static const int      resetMask = 1 << (resetPin - 32); 
-static const int      extSel_Pin = 46;
+static const int      extSel_Pin = 47;
 static const int      extSel_PortPin = extSel_Pin - 32 /* port1 pin*/;
 static const int      extSel_Mask = (1 << extSel_PortPin);
 static const int      data0Pin = 38;
@@ -97,7 +97,7 @@ static const uint32_t copyResetMask = 0x40000000;
 static const uint32_t copyDataShift = 22;
 static const uint32_t copyDataMask = 0xff << copyDataShift;
 
-uint8_t atariRam[64 * 1024] = {0xff};
+uint8_t atariRam[64 * 1024] = {0x0};
 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
@@ -108,8 +108,8 @@ uint8_t atariRam[64 * 1024] = {0xff};
 //                               +--casInh_ / ROM read
 //                               | +---Clock
 //                               | | +--- ADDR                               +-- RW
-//                               | | |                                       |  +-- refresh in              +--ext sel out
-//                               | | |                                       |  |   +---DATA                |  +-- RESET in 
+//                               | | |                                       |  +-- refresh in              +--RESET in
+//                               | | |                                       |  |   +---DATA                |  +-- ext sel out 
 //                               | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
 static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
 static const int ledPin = 48;
@@ -162,7 +162,7 @@ void busyWaitCCount(int cycles) {
     while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
 }
 
-void rgbLedWriteBitBang(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
+void rgbLedWriteBitBang_NO(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
     //busyWaitCCount(100);
     //return;
 
@@ -175,7 +175,7 @@ void rgbLedWriteBitBang(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t
     int longCycles = (int)(0.8 * 240) - tune;
     int shortCycles = (int)(0.4 * 240) - tune;
 
-    uint32_t bitMask = 1 << (ledPin - 32); 
+    uint32_t bitMask = 1 << (47 - 32); 
     int i = 0;
     for (int col = 0; col < 3; col++) {
         for (int bit = 0; bit < 8; bit++) {
@@ -196,7 +196,7 @@ void rgbLedWriteBitBang(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t
         }
     }
 }
-  
+
 // socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
     neopixelWrite(ledPin, 0, 0, 8);
@@ -239,6 +239,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     }
     Serial.printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
     Serial.flush();
+    neopixelWrite(ledPin, 0, 8, 0);
     return true;
 }
 
@@ -250,18 +251,6 @@ void IRAM_ATTR threadFunc(void *) {
     int elapsedSec = 0;
     
     printf("CORE0: threadFunc() start\n");
-    if (0) { 
-        uint32_t bitMask = 1 << (ledPin - 32); 
-        pinMode(ledPin, OUTPUT);
-        digitalWrite(ledPin, 1);
-        printf("REG_WRITE start\n");
-        REG_WRITE(GPIO_OUT1_REG, REG_READ(GPIO_OUT1_REG) & ~bitMask);
-        Serial.printf("bitbang start\n");
-        Serial.flush();
-        rgbLedWriteBitBang(ledPin, 0, 0, 8);
-        Serial.printf("bitbang done\n");
-        Serial.flush();
-    }
 
     int pi = 0;
 
@@ -340,7 +329,7 @@ void IRAM_ATTR threadFunc(void *) {
             if ((psramLoopCount & 127) == 1) {
                 int b = (psramLoopCount >> 4) & 127;
                 //rgbLedWriteBitBang(ledPin, b, b, 0);
-                neopixelWrite(ledPin, b, b, 0);
+                //neopixelWrite(ledPin, b, b, 0);
             }
 #endif
             if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
@@ -365,6 +354,7 @@ void IRAM_ATTR threadFunc(void *) {
     //enableLoopWDT();
 #endif
     neopixelWrite(ledPin, 8, 0, 0);
+    //while(1) { delay(10); }
     printf("STOPPED. max dma bufs in use %d\n", maxBufsUsed);
 
     uint32_t startUsec = micros();
@@ -449,8 +439,10 @@ void IRAM_ATTR threadFunc(void *) {
 }
 
 void setup() {
-    delay(1000);
-    Serial.begin(1200);
+    for(auto i : pins) pinMode(i, INPUT);
+    pinMode(ledPin, OUTPUT);
+    digitalWrite(ledPin, 1);
+    neopixelWrite(ledPin, 0, 10, 0);
     printf("setup()\n");
     if (1) { 
         uint32_t val = 0x10000000;
@@ -557,8 +549,8 @@ void setup() {
         pinMode(extSel_Pin, INPUT_PULLUP);
 
     }
-    pinMode(ledPin, OUTPUT);
-    digitalWrite(ledPin, 1);
+    //pinMode(ledPin, OUTPUT);
+    //digitalWrite(ledPin, 1);
 
     //pinMode(extSel_Pin, OUTPUT);
     //digitalWrite(extSel_Pin, 0);
@@ -573,6 +565,7 @@ void setup() {
         testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, clockMask);
 
     xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
+        
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 120 * 1000000) {}
 }
@@ -645,6 +638,9 @@ void IRAM_ATTR iloop_busMonitor() {
         r0 = REG_READ(GPIO_IN_REG);
         r1 = REG_READ(GPIO_IN1_REG);
  
+        if ((r1 & resetMask) == 0 || (r0 & refreshMask) == 0)
+            continue;
+
         uint16_t addr = (r0 & addrMask) >> addrShift; 
 
         if ((r1 & resetMask) != 0) {
@@ -732,7 +728,7 @@ void IRAM_ATTR iloop_pbi() {
     int loopCount = 0;
 
     static const uint32_t bankMask = 0xff00, bankVal = 0x0000;
-    static uint8_t banks[512] = {0xff};
+    static uint8_t banks[512] = {0};
     uint8_t *bank = &banks[0];
 
     minLoopElapsed = 0xffff;
@@ -761,7 +757,7 @@ void IRAM_ATTR iloop_pbi() {
         r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
         uint16_t addr = (r0 & addrMask) >> addrShift;                            
         
-        if ((r0 & (refreshMask | casInh_Mask)) != 0) {                               // ignore refresh or ROM access 
+        if ((r0 & (refreshMask | casInh_Mask)) == (refreshMask | casInh_Mask)) {                               // ignore refresh or ROM access 
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 REG_WRITE(GPIO_OUT1_REG, (atariRam[addr] << addrShift) | extSel_Mask);  //    output data to data bus
                 //lastAddr = addr;                           
@@ -935,7 +931,7 @@ void loop() {
         int toggle = 0;
         pinMode(19, INPUT);
         pinMode(20, INPUT);
-        pinMode(ledPin, OUTPUT);
+        //pinMode(ledPin, OUTPUT);
         while(1) {
             //(ledPin, toggle * 8, digitalRead(19) * 32, digitalRead(20) * 32);
             toggle = !toggle;
