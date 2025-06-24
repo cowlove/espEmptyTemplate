@@ -48,11 +48,12 @@ static const struct {
    bool tcpSendPsram  = 0;
    bool dumpPsram     = 0;
    bool dumpSram      = 0;   ;
-   bool histogram     = 0;
+   bool histogram     = 1;
    bool timingTest    = 0;
    bool logicAnalyzer = 0;
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
+   bool maskCore0Int  = 1;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -127,7 +128,7 @@ uint32_t *dram;
 static const int testFreq = 1.8 * 1000000;//1000000;
 static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
-static const float histRunSec = 30.0;
+static const float histRunSec = 60.0;
 
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
@@ -197,16 +198,19 @@ void rgbLedWriteBitBang(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t
 }
   
 // socat TCP-LISTEN:9999 - > file.bin
-bool sendPsramTcp(const char *buf, int len, bool resetWdt = true) { 
+bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
     neopixelWrite(ledPin, 0, 0, 8);
+    //char *host = "10.250.250.240";
+    char *host = "192.168.68.131";
+    ////WiFi.begin("Station54", "Local1747"); host = "10.250.250.240";
+    //wifiConnect();
     wifiDisconnect();
     wifiConnect();
     WiFiClient wc;
     static const int txSize = 1024;
    
     neopixelWrite(ledPin, 8, 0, 8);
-    //int r = wc.connect("192.168.68.131", 9999);
-    int r = wc.connect("10.250.250.240", 9999);
+    int r = wc.connect(host, 9999);
     printf("connect() returned %d\n", r);
     uint32_t startMs = millis();
     int count;
@@ -288,9 +292,9 @@ void IRAM_ATTR threadFunc(void *) {
     portDISABLE_INTERRUPTS();
     //uint32_t oldint;
     //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
-#endif
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
+#endif
 
     while(1) { 
         if (psramLoopCount != *drLoopCount) {
@@ -299,20 +303,9 @@ void IRAM_ATTR threadFunc(void *) {
                 Serial.flush();
             }
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
-#if 0
-            if (*drLoopCount - psramLoopCount >= dma_bufs - 2) { 
-                printf("esp_aync_memcpy buffer overrun psramLoopCount %d dramLoopCount %d\n", psramLoopCount, dramLoopCount);
-                break;
-            }
-            if (esp_async_memcpy(handle, (void *)(psram + pi), (void *)dma_buf, dma_sz, 
-                async_memcpy_callback, NULL) != ESP_OK) { 
-                printf("esp_asyn_memcpy() error, psramLoopCount %d/%d\n", psramLoopCount, psram_sz / dma_sz);
-                break;
-            }
-#else
-            cbCount++;
-#endif
-            if (opt.histogram) {
+
+            if (opt.histogram) { 
+                cbCount++; // fake dma callback
                 for(uint32_t *p = (uint32_t *)dma_buf; p < ((uint32_t *)dma_buf) + dma_sz / sizeof(uint32_t); p++) {
                     if (lastTsc != -1) {
                         //int delta = *p - lastTsc;
@@ -321,6 +314,16 @@ void IRAM_ATTR threadFunc(void *) {
                         buckets[delta]++;
                     }
                     lastTsc = *p;
+                }
+            } else { 
+                if (*drLoopCount - psramLoopCount >= dma_bufs - 2) { 
+                    printf("esp_aync_memcpy buffer overrun psramLoopCount %d dramLoopCount %d\n", psramLoopCount, dramLoopCount);
+                    break;
+                }
+                if (esp_async_memcpy(handle, (void *)(psram + pi), (void *)dma_buf, dma_sz, 
+                    async_memcpy_callback, NULL) != ESP_OK) { 
+                    printf("esp_asyn_memcpy() error, psramLoopCount %d/%d\n", psramLoopCount, psram_sz / dma_sz);
+                    break;
                 }
             }
 
@@ -408,7 +411,11 @@ void IRAM_ATTR threadFunc(void *) {
     printf("DUMP %.2f\n", millis() / 1000.0);
     
     if (opt.tcpSendPsram) { 
-        j.begin();
+        //j.begin();
+        //wdtReset();
+        yield();
+        //disableCore0WDT();
+        //disableLoopWDT();
         while(!sendPsramTcp((char *)psram, psram_sz)) delay(1000);
     }
     if (opt.dumpPsram) { 
@@ -542,7 +549,7 @@ void setup() {
         ledcAttachChannel(readWritePin, 10000, 8, 1);
         ledcWrite(readWritePin, 128);
 #else 
-        pinMode(readWritePin, INPUT_PULLDOWN);
+        pinMode(readWritePin, INPUT_PULLUP);
 #endif
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(resetPin, INPUT_PULLUP);
@@ -627,22 +634,19 @@ void IRAM_ATTR iloop_busMonitor() {
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
     minLoopElapsed = 0xffff;
     maxLoopElapsed = 0;
-    while(1) {
+    while(!stop) {
         //uint32_t *nextOut = dram + dma_sz * ((dramLoopCount + 1) & (dma_bufs - 1)) / sizeof(uint32_t);
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {} // wait falling edge 
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {} // wait rising edge 
         tsc = XTHAL_GET_CCOUNT();
         uint32_t elapsed = tsc - lastTsc;
+        lastTsc = tsc;
 
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         r0 = REG_READ(GPIO_IN_REG);
-        //r1 = REG_READ(GPIO_IN1_REG);
+        r1 = REG_READ(GPIO_IN1_REG);
  
         uint16_t addr = (r0 & addrMask) >> addrShift; 
-        REG_WRITE(GPIO_OUT1_REG, (atariRam[addr] << addrShift) | extSel_Mask);  //    output data to data bus
-        REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
-        lastTsc = XTHAL_GET_CCOUNT();
- 
+
         if ((r1 & resetMask) != 0) {
             r0 |= copyResetMask;
         } else {
@@ -970,7 +974,7 @@ void loop() {
     } else { 
         iloop_pbi();
     }
-    while(1) {}
+    //while(1) {}
     //enableLoopWDT();
     portENABLE_INTERRUPTS();
     delay(200);
