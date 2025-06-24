@@ -542,7 +542,7 @@ void setup() {
         ledcAttachChannel(readWritePin, 10000, 8, 1);
         ledcWrite(readWritePin, 128);
 #else 
-        pinMode(readWritePin, INPUT_PULLUP);
+        pinMode(readWritePin, INPUT_PULLDOWN);
 #endif
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(resetPin, INPUT_PULLUP);
@@ -735,6 +735,7 @@ void IRAM_ATTR iloop_pbi() {
     maxLoopElapsed = 0;
     int elapsed = 0;
     while(1) {
+        tscDataReady = XTHAL_GET_CCOUNT();
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         tsc = XTHAL_GET_CCOUNT();
@@ -769,11 +770,11 @@ void IRAM_ATTR iloop_pbi() {
                 __asm__ ("nop"); // 1 cycle
                 __asm__ ("nop"); // 1 cycle
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
-                tscDataReady = XTHAL_GET_CCOUNT();
+                //tscDataReady = XTHAL_GET_CCOUNT();
             } else {                                                                    // 2. WRITE 
                 //atariRam[addr] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
                 const uint8_t data = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;   
-                tscDataReady = XTHAL_GET_CCOUNT();
+                //tscDataReady = XTHAL_GET_CCOUNT();
                 if ((addr & bankMask) == bankVal) { 
                     bank[addr & ~bankMask] = data;
                 } else {
