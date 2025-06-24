@@ -48,10 +48,10 @@ static const struct {
    bool tcpSendPsram  = 0;
    bool dumpPsram     = 0;
    bool dumpSram      = 0;   ;
-   bool histogram     = 1;
+   bool histogram     = 0;
    bool timingTest    = 0;
    bool logicAnalyzer = 0;
-   bool busAnalyzer   = 1;
+   bool busAnalyzer   = 0;
    bool bitResponse   = 0;
 } opt;
 
@@ -127,7 +127,7 @@ uint32_t *dram;
 static const int testFreq = 1.8 * 1000000;//1000000;
 static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
-static const float histRunSec = 10.0;
+static const float histRunSec = 300.0;
 
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
@@ -139,6 +139,7 @@ int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
 volatile bool stop = false;
 dedic_gpio_bundle_handle_t bundleIn, bundleOut;
+uint32_t lastAddr;
 
 JStuff j;
 
@@ -242,6 +243,8 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = true) {
 // histogram shit from sram and discards it 
 
 void IRAM_ATTR threadFunc(void *) { 
+    int elapsedSec = 0;
+    
     printf("CORE0: threadFunc() start\n");
     if (0) { 
         uint32_t bitMask = 1 << (ledPin - 32); 
@@ -326,7 +329,7 @@ void IRAM_ATTR threadFunc(void *) {
             if (pi >= (psram_sz - dma_sz * 2) / sizeof(uint32_t)) {
                 pi = 0;
                 //wdtReset();
-                if (!opt.histogram || psramLoopCount > 100000 * histRunSec / 70) 
+                if (!opt.histogram) 
                     break;
             }
             
@@ -341,7 +344,15 @@ void IRAM_ATTR threadFunc(void *) {
         } else {
             //delay(1);
         }
+        if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
+            startTsc = XTHAL_GET_CCOUNT();
+            if(++elapsedSec > histRunSec) break;
+        }
     }
+
+    stop = true;
+    startTsc = XTHAL_GET_CCOUNT();
+    while(XTHAL_GET_CCOUNT() - startTsc < 24 * 1000000) {}
 
 #ifdef DISABLE_CORE0_INT
     //_xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi; 
@@ -349,16 +360,15 @@ void IRAM_ATTR threadFunc(void *) {
     enableCore0WDT();
     //enableLoopWDT();
 #endif
-    //neopixelWrite(ledPin, 8, 0, 0);
+    neopixelWrite(ledPin, 8, 0, 0);
     printf("STOPPED. max dma bufs in use %d\n", maxBufsUsed);
-    stop = true;
 
     uint32_t startUsec = micros();
     while(cbCount < psramLoopCount && micros() - startUsec < 1000000) {
         delay(50);
     }
-    printf("\n\n\n%.2f cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dramLoop %d psramLoop %d minLoop %d maxLoop %d jit %d late %d\n", 
-        millis() / 1000.0, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  dramLoopCount, psramLoopCount, minLoopElapsed, 
+    printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x dramLoop %d psramLoop %d minLoop %d maxLoop %d jit %d late %d\n", 
+        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  dramLoopCount, psramLoopCount, minLoopElapsed, 
         maxLoopElapsed, maxLoopElapsed - minLoopElapsed, loopElapsedLate);
  
     if (opt.dumpSram) {
@@ -619,7 +629,7 @@ void IRAM_ATTR iloop_busMonitor() {
         r0 = REG_READ(GPIO_IN_REG);
         //r1 = REG_READ(GPIO_IN1_REG);
  
-        uint16_t addr = (r0 & addrMask) >> addrShift;                            
+        uint16_t addr = (r0 & addrMask) >> addrShift; 
         REG_WRITE(GPIO_OUT1_REG, (atariRam[addr] << addrShift) | extSel_Mask);  //    output data to data bus
         REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
         lastTsc = XTHAL_GET_CCOUNT();
@@ -701,37 +711,69 @@ void IRAM_ATTR iloop_bitResponse() {
 void IRAM_ATTR iloop_pbi() {	
     uint32_t r0, r1;
     int ram = 0;
-    uint32_t tscRise, tscFall, tscDataReady;
+    uint32_t tscRise, tscFall, tscDataReady, tsc;
 
     uint32_t *out = dram;
+    uint32_t *nextOut = dram;
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
     int loopCount = 0;
-    while(1) {
+
+    static const uint32_t bankMask = 0xff00, bankVal = 0x0000;
+    static uint8_t banks[512] = {0xff};
+    uint8_t *bank = &banks[0];
+
+    minLoopElapsed = 0xffff;
+    maxLoopElapsed = 0;
+    int elapsed = 0;
+    while(!stop) {
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
-        if (loopCount++ > 5) {
-            *out++ = (XTHAL_GET_CCOUNT() - tscDataReady);  
-        } 
+        tsc = XTHAL_GET_CCOUNT();
+    
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+        if (bank == &banks[0]) {
+            bank = &banks[256];
+        } else { 
+            bank = &banks[0];
+        } 
+    
         r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
         uint16_t addr = (r0 & addrMask) >> addrShift;                            
         
-        //if ((r0 & (refreshMask | casInh_Mask)) != 0) {                               // ignore refresh or ROM access 
+        if ((r0 & (refreshMask | casInh_Mask)) != 0) {                               // ignore refresh or ROM access 
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 REG_WRITE(GPIO_OUT1_REG, (atariRam[addr] << addrShift) | extSel_Mask);  //    output data to data bus
+                lastAddr = addr;                           
+                if (loopCount > 5) {
+                    elapsed = tsc - tscDataReady;  
+                    if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
+                    if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
+                } else {
+                    loopCount++;
+                }
+                //if (stop) break;
+                uint8_t data;
+                if ((addr & bankMask) == bankVal) { 
+                    data = bank[addr & ~bankMask];
+                } else {
+                    data = atariRam[addr];
+                }
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 tscDataReady = XTHAL_GET_CCOUNT();
             } else {                                                                    // 2. WRITE 
                 atariRam[0] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
             }
-        //}
-        if (out == dram_end) { 
-            dramLoopCount++;
-            out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
-            //out = nextOut;
-            dram_end = out + dma_sz / sizeof(uint32_t);
         }
-        
+        if (opt.histogram) { 
+            *out++ = elapsed;
+            if (out == dram_end) { 
+                dramLoopCount++;
+                out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
+                //out = nextOut;
+                dram_end = out + dma_sz / sizeof(uint32_t);
+            }
+        }
+         __asm__ __volatile__("nop"); // 1 cycle
     }
 }
 
@@ -876,7 +918,7 @@ void loop() {
     } else { 
         iloop_pbi();
     }
-
+    while(1) {}
     //enableLoopWDT();
     //portENABLE_INTERRUPTS();
     delay(200);
