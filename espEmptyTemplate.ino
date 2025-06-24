@@ -351,7 +351,7 @@ void IRAM_ATTR threadFunc(void *) {
     }
 
     stop = true;
-    int maxLoopE = maxLoopElapsed, minLoopE = minLoopElapsed;
+    int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
     startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 24 * 1000000) {}
 
@@ -535,9 +535,17 @@ void setup() {
         digitalWrite(clockPin, 0);
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
+
+#if 0 
+        pinMode(readWritePin, OUTPUT);
+        digitalWrite(readWritePin, 0);
+        ledcAttachChannel(readWritePin, 8000, 8, 1);
+        ledcWrite(readWritePin, 128);
+#else 
+        pinMode(readWritePin, INPUT_PULLUP);
+#endif
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(resetPin, INPUT_PULLUP);
-        pinMode(readWritePin, INPUT_PULLUP);
         pinMode(refreshPin, INPUT_PULLUP);
         pinMode(extSel_Pin, INPUT_PULLUP);
 
@@ -750,6 +758,7 @@ void IRAM_ATTR iloop_pbi() {
                     elapsed = tsc - tscDataReady;  
                     if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
                     if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
+                    //__asm__ __volatile__("nop");
                 } else {
                     loopCount++;
                 }
@@ -762,9 +771,25 @@ void IRAM_ATTR iloop_pbi() {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 tscDataReady = XTHAL_GET_CCOUNT();
             } else {                                                                    // 2. WRITE 
-                atariRam[0] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
+                if (loopCount > 5) {
+                    elapsed = tsc - tscDataReady;  
+                    if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
+                    if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
+                    //__asm__ __volatile__("nop");
+                } else {
+                    loopCount++;
+                }
+                atariRam[addr] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
+                //if ((addr & bankMask) == bankVal) { 
+                //    bank[addr & ~bankMask] = data;
+                //} else {
+                //    = data;
+                //}
+                tscDataReady = XTHAL_GET_CCOUNT();
             }
         }
+        __asm__ __volatile__("nop"); // 1 cycle
+#if 0 
         if (opt.histogram) { 
             *out++ = elapsed;
             if (out == dram_end) { 
@@ -772,9 +797,10 @@ void IRAM_ATTR iloop_pbi() {
                 out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
                 //out = nextOut;
                 dram_end = out + dma_sz / sizeof(uint32_t);
+                __asm__ __volatile__("nop"); // 1 cycle
             }
         }
-         __asm__ __volatile__("nop"); // 1 cycle
+#endif
     }
 }
 
