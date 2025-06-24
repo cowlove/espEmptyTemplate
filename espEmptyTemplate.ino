@@ -536,10 +536,10 @@ void setup() {
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
 
-#if 0 
+#if 0 // why doesn't PWM readWritePin work to alternate between R & W
         pinMode(readWritePin, OUTPUT);
         digitalWrite(readWritePin, 0);
-        ledcAttachChannel(readWritePin, 8000, 8, 1);
+        ledcAttachChannel(readWritePin, 10000, 8, 1);
         ledcWrite(readWritePin, 128);
 #else 
         pinMode(readWritePin, INPUT_PULLUP);
@@ -740,12 +740,18 @@ void IRAM_ATTR iloop_pbi() {
         tsc = XTHAL_GET_CCOUNT();
     
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+        if (loopCount > 5) {
+            elapsed = tsc - tscDataReady;  
+            if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
+            if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
+            //__asm__ __volatile__("nop");
+        } else {
+            loopCount++;
+        }
+        __asm__ ("nop"); // 1 cycle
+        __asm__ ("nop"); // 1 cycle
+
         //if (stop) break;
-        if (bank == &banks[0]) {
-            bank = &banks[256];
-        } else { 
-            bank = &banks[0];
-        } 
     
         r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
         uint16_t addr = (r0 & addrMask) >> addrShift;                            
@@ -753,39 +759,33 @@ void IRAM_ATTR iloop_pbi() {
         if ((r0 & (refreshMask | casInh_Mask)) != 0) {                               // ignore refresh or ROM access 
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 REG_WRITE(GPIO_OUT1_REG, (atariRam[addr] << addrShift) | extSel_Mask);  //    output data to data bus
-                lastAddr = addr;                           
-                if (loopCount > 5) {
-                    elapsed = tsc - tscDataReady;  
-                    if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
-                    if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
-                    //__asm__ __volatile__("nop");
-                } else {
-                    loopCount++;
-                }
+                //lastAddr = addr;                           
                 uint8_t data;
                 if ((addr & bankMask) == bankVal) { 
                     data = bank[addr & ~bankMask];
                 } else {
                     data = atariRam[addr];
                 }
+                __asm__ ("nop"); // 1 cycle
+                __asm__ ("nop"); // 1 cycle
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 tscDataReady = XTHAL_GET_CCOUNT();
             } else {                                                                    // 2. WRITE 
-                if (loopCount > 5) {
-                    elapsed = tsc - tscDataReady;  
-                    if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
-                    if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
-                    //__asm__ __volatile__("nop");
-                } else {
-                    loopCount++;
-                }
-                atariRam[addr] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
-                //if ((addr & bankMask) == bankVal) { 
-                //    bank[addr & ~bankMask] = data;
-                //} else {
-                //    = data;
-                //}
+                //atariRam[addr] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
+                const uint8_t data = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;   
                 tscDataReady = XTHAL_GET_CCOUNT();
+                if ((addr & bankMask) == bankVal) { 
+                    bank[addr & ~bankMask] = data;
+                } else {
+                    atariRam[addr] = data;
+                }
+                if (addr == 0xffff) { // PORTB write, switch bank
+                    if (bank == &banks[0]) {
+                        bank = &banks[256];
+                    } else { 
+                        bank = &banks[0];
+                    } 
+                }
             }
         }
         __asm__ __volatile__("nop"); // 1 cycle
