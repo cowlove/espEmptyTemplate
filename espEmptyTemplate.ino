@@ -736,9 +736,11 @@ void IRAM_ATTR iloop_pbi() {
     maxLoopElapsed = 0;
     int elapsed = 0;
     bool enabled = false;
+    
+    while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
+    while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+    
     while(1) {
-        //tscDataReady = XTHAL_GET_CCOUNT();
-        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         if (opt.histogram) { 
             if (loopCount > 5) {
@@ -756,18 +758,18 @@ void IRAM_ATTR iloop_pbi() {
             }
         }
 
-        if (enabled == false && XTHAL_GET_CCOUNT() - tscStart > 240 * 1000000 * 10)
-            enabled = true;
         //if (stop) break;
     
         r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
-        uint16_t addr = (r0 & addrMask) >> addrShift;                            
-        
+        const uint16_t addr = (r0 & addrMask) >> addrShift;                            
+        const uint8_t page = addr >> 10;
+        //if (enabled == false && XTHAL_GET_CCOUNT() - tscStart > 240 * 1000000 * 10)
+        //    enabled = true;
         if ((r0 & (refreshMask | casInh_Mask)) == (refreshMask | casInh_Mask)
-            && (addr & 0xffffff00) == 0x600
-           // && enabled 
+            && (page > 1) 
+                       // && enabled 
         ) {
-            lastAddr = addr;                               // ignore refresh or ROM access 
+            //lastAddr = addr;                               // ignore refresh or ROM access 
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data;
 #define NO_BANK
@@ -780,40 +782,31 @@ void IRAM_ATTR iloop_pbi() {
                     data = atariRam[addr];
                 }
 #endif
-                //__asm__ ("nop"); // 1 cycle
-                //__asm__ ("nop"); // 1 cycle
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
-                tscDataReady = XTHAL_GET_CCOUNT();
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-            } else {                                                                    // 2. WRITE 
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                __asm__ ("nop"); // 1 cycle
-                //atariRam[addr] = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;         //    get write data from bus, write to local RAM 
+                while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
 
-                const uint8_t data = (REG_READ(GPIO_IN1_REG) & dataMask) >> dataShift;   
-                tscDataReady = XTHAL_GET_CCOUNT();
+            } else {                                                                    // 2. WRITE 
 #ifdef NO_BANK
-                atariRam[addr] = data;
+                uint8_t *writeDest = &atariRam[addr];
 #else
+                uint8_t *writeDest;
                 if ((addr & bankMask) == bankVal) { 
-                    bank[addr & ~bankMask] = data;
+                    writeDest = &bank[addr & ~bankMask];;
                 } else {
-                    atariRam[addr] = data;
+                    writeDest = &atariRam[addr];
                 }
+#endif
+                while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
+                do { 
+                    r1 = REG_READ(GPIO_IN1_REG);
+                } while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
+                
+                const uint8_t data = (r1 & dataMask) >> dataShift;
+                *writeDest = data;   
+#ifndef NO_BANK
+                // TODO: hide bank logic in a register write overlap spot
                 if (addr == 0xffff) { // PORTB write, switch bank
                     if (bank == &banks[0]) {
                         bank = &banks[256];
@@ -824,8 +817,8 @@ void IRAM_ATTR iloop_pbi() {
 #endif
             }
         } else {
-           while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-  
+            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
+            while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         }
 //         __asm__ __volatile__("nop"); // 1 cycle
     }
