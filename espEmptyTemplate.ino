@@ -54,6 +54,7 @@ static const struct {
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
    bool maskCore0Int  = 0;
+   float histRunSec = -10;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -141,7 +142,6 @@ uint32_t *dram;
 static const int testFreq = 1.8 * 1000000;//1000000;
 static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
-static const float histRunSec = -1;
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
 volatile int dramLoopCount = 0;
@@ -350,7 +350,7 @@ void IRAM_ATTR threadFunc(void *) {
         }
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
-            if(++elapsedSec > histRunSec && histRunSec > 0) break;
+            if(++elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
         }
     }
 
@@ -793,15 +793,6 @@ void IRAM_ATTR iloop_pbi() {
                 __asm__ ("nop"); 
                 __asm__ ("nop"); 
                 REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-                if (opt.histogram) { 
-                    *out++ = XTHAL_GET_CCOUNT() - tscFall;
-                    if (out == dram_end) { 
-                        dramLoopCount++;
-                        out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
-                        dram_end = out + dma_sz / sizeof(uint32_t);
-                        __asm__("memw");
-                    }
-                }
 
             } else {                                                                    // 2. WRITE 
 #ifdef NO_BANK
@@ -820,6 +811,14 @@ void IRAM_ATTR iloop_pbi() {
                 do { 
                     r1 = REG_READ(GPIO_IN1_REG);
                 } while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
+                if (opt.histogram) {  // XHISTOGRAM
+                    *out++ = XTHAL_GET_CCOUNT() - tscFall;
+                    if (out == dram_end) { 
+                        dramLoopCount++;
+                        out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
+                        dram_end = out + dma_sz / sizeof(uint32_t);
+                    }
+                }
                 tscFall = XTHAL_GET_CCOUNT();
                 __asm__ ("nop"); 
                 __asm__ ("nop"); 
@@ -830,7 +829,7 @@ void IRAM_ATTR iloop_pbi() {
                 uint8_t data = (r1 & dataMask) >> dataShift;
                 if (addr == 1666 && fakeData) data += 1;
                 *writeDest = data;   
-#ifndef NO_BANK
+#if 0 
                 // TODO: hide bank logic in a register write overlap spot
                 if (addr == 0xffff) { // PORTB write, switch bank
                     if (bank == &banks[0]) {
@@ -858,7 +857,6 @@ void IRAM_ATTR iloop_pbi() {
             __asm__ ("nop"); 
             REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         }
-         __asm__ __volatile__("nop"); // 1 cycle
     }
 }
 
