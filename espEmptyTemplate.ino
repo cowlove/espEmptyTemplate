@@ -128,8 +128,7 @@ uint32_t *dram;
 static const int testFreq = 1.8 * 1000000;//1000000;
 static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
-static const float histRunSec = 300.0;
-
+static const float histRunSec = -1;
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
 int dramLoopCount = 0;
@@ -338,7 +337,7 @@ void IRAM_ATTR threadFunc(void *) {
         }
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
-            if(++elapsedSec > histRunSec) break;
+            if(++elapsedSec > histRunSec && histRunSec > 0) break;
         }
     }
 
