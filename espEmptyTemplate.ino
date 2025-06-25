@@ -766,14 +766,12 @@ void IRAM_ATTR iloop_pbi() {
         //if (enabled == false && XTHAL_GET_CCOUNT() - tscStart > 240 * 1000000 * 10)
         //    enabled = true;
         if ((r0 & (refreshMask | casInh_Mask)) == (refreshMask | casInh_Mask)
-            && (page > 1) 
-                       // && enabled 
+            // && (page > 1) 
+            // && enabled 
         ) {
-            __asm__ ("nop"); 
-            __asm__ ("nop"); 
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data;
-#define NO_BANK
+#define NO_BANK // Bank not working yet 
 #ifdef NO_BANK
                 data = atariRam[addr];
 #else
@@ -783,6 +781,8 @@ void IRAM_ATTR iloop_pbi() {
                     data = atariRam[addr];
                 }
 #endif
+                __asm__ ("nop"); // needed for timing, causes memory errors.  
+                __asm__ ("nop"); 
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
@@ -799,18 +799,21 @@ void IRAM_ATTR iloop_pbi() {
                     writeDest = &atariRam[addr];
                 }
 #endif
+                __asm__ ("nop"); // ??? Seems to fix intermittent ROM boot error? 
+                __asm__ ("nop"); 
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
                 do { 
                     r1 = REG_READ(GPIO_IN1_REG);
                 } while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
                 
                 const uint8_t data = (r1 & dataMask) >> dataShift;
+                //if (addr == 1666 && fakeData) data += 1;
                 *writeDest = data;   
 #ifndef NO_BANK
                 // TODO: hide bank logic in a register write overlap spot
                 if (addr == 0xffff) { // PORTB write, switch bank
                     if (bank == &banks[0]) {
-                        bank = &banks[256];
+                        bank = &banks[0];
                     } else { 
                         bank = &banks[0];
                     } 
