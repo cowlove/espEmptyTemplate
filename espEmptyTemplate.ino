@@ -736,12 +736,14 @@ void IRAM_ATTR iloop_pbi() {
     maxLoopElapsed = 0;
     int elapsed = 0;
     bool enabled = false;
+
+    const bool fakeData = *((uint32_t *)&atariRam[1668]) == 100;
     
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+    REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
     
     while(1) {
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         if (opt.histogram) { 
             if (loopCount > 5) {
                 elapsed = tsc - tscDataReady;  
@@ -757,7 +759,6 @@ void IRAM_ATTR iloop_pbi() {
                 loopCount++;
             }
         }
-
         //if (stop) break;
     
         r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
@@ -787,6 +788,9 @@ void IRAM_ATTR iloop_pbi() {
                 REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+                __asm__ ("nop"); 
+                __asm__ ("nop"); 
+                REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 
             } else {                                                                    // 2. WRITE 
 #ifdef NO_BANK
@@ -805,8 +809,11 @@ void IRAM_ATTR iloop_pbi() {
                 do { 
                     r1 = REG_READ(GPIO_IN1_REG);
                 } while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
+                __asm__ ("nop"); 
+                __asm__ ("nop"); 
+                REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
                 
-                const uint8_t data = (r1 & dataMask) >> dataShift;
+                uint8_t data = (r1 & dataMask) >> dataShift;
                 //if (addr == 1666 && fakeData) data += 1;
                 *writeDest = data;   
 #ifndef NO_BANK
@@ -823,6 +830,9 @@ void IRAM_ATTR iloop_pbi() {
         } else {
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+            __asm__ ("nop"); 
+            __asm__ ("nop"); 
+            REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         }
 //         __asm__ __volatile__("nop"); // 1 cycle
     }
