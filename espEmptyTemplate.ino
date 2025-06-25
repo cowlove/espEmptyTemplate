@@ -769,7 +769,8 @@ void IRAM_ATTR iloop_pbi() {
             && (page > 1) 
                        // && enabled 
         ) {
-            //lastAddr = addr;                               // ignore refresh or ROM access 
+            __asm__ ("nop"); 
+            __asm__ ("nop"); 
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data;
 #define NO_BANK
