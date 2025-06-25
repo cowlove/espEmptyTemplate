@@ -118,6 +118,12 @@ static const int ledPin = 48;
 
 volatile uint32_t *gpio0 = (volatile uint32_t *)GPIO_IN_REG;
 volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
+
+#undef REG_READ
+//#undef REG_WRITE
+#define REG_READ(r) (*((volatile uint32_t *)r))
+#define REG_WRITE(r,v) do { *((volatile uint32_t *)r) = (v); } while(0)
+
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
 static const int dma_sz = 4096 - 64;
@@ -737,7 +743,7 @@ void IRAM_ATTR iloop_pbi() {
     int elapsed = 0;
     bool enabled = false;
 
-    const bool fakeData = *((uint32_t *)&atariRam[1668]) == 100;
+    const bool fakeData = true; //*((uint32_t *)&atariRam[1668]) == 100;
     
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
@@ -814,7 +820,7 @@ void IRAM_ATTR iloop_pbi() {
                 REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
                 
                 uint8_t data = (r1 & dataMask) >> dataShift;
-                //if (addr == 1666 && fakeData) data += 1;
+                if (addr == 1666 && fakeData) data += 1;
                 *writeDest = data;   
 #ifndef NO_BANK
                 // TODO: hide bank logic in a register write overlap spot
