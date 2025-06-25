@@ -119,10 +119,17 @@ static const int ledPin = 48;
 volatile uint32_t *gpio0 = (volatile uint32_t *)GPIO_IN_REG;
 volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 
+#if 1
 #undef REG_READ
-//#undef REG_WRITE
+#undef REG_WRITE
+#if 0
 #define REG_READ(r) (*((volatile uint32_t *)r))
 #define REG_WRITE(r,v) do { *((volatile uint32_t *)r) = (v); } while(0)
+#else
+#define REG_READ(r) (*((uint32_t *)r))
+#define REG_WRITE(r,v) do { *((uint32_t *)r) = (v); } while(0)
+#endif 
+#endif 
 
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
@@ -137,7 +144,7 @@ static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
 static const float histRunSec = -1;
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
-int dramLoopCount = 0;
+volatile int dramLoopCount = 0;
 int resetLowCycles = 0;
 int psramLoopCount = 0;
 int lateCount = 0;
@@ -302,7 +309,7 @@ void IRAM_ATTR threadFunc(void *) {
                 cbCount++; // fake dma callback
                 for(uint32_t *p = (uint32_t *)dma_buf; p < ((uint32_t *)dma_buf) + dma_sz / sizeof(uint32_t); p++) {
                     if (lastTsc != -1) {
-                        //int delta = *p - lastTsc;
+                        //int delta = *(p + 1) - *p;
                         int delta = *p;
                         delta = min((int)(sizeof(buckets) / sizeof(buckets[0])), delta);
                         buckets[delta]++;
@@ -540,17 +547,18 @@ void setup() {
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
 
-#if 0 // why doesn't PWM readWritePin work to alternate between R & W
+#if 1 // why doesn't PWM readWritePin work to alternate between R & W
         pinMode(readWritePin, OUTPUT);
         digitalWrite(readWritePin, 0);
         ledcAttachChannel(readWritePin, 10000, 8, 2);
         ledcWrite(readWritePin, 128);
 #else 
-        pinMode(readWritePin, INPUT_PULLDOWN);
+        pinMode(readWritePin, INPUT_PULLUP);
 #endif
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(resetPin, INPUT_PULLUP);
         pinMode(refreshPin, INPUT_PULLUP);
+        pinMode(casInh_pin, INPUT_PULLUP);
         pinMode(extSel_Pin, INPUT_PULLUP);
 
     }
@@ -725,7 +733,7 @@ void IRAM_ATTR iloop_bitResponse() {
 void IRAM_ATTR iloop_pbi() {	
     uint32_t r0, r1;
     int ram = 0;
-    uint32_t tscRise, tscFall, tscDataReady, tsc;
+    uint32_t tscFall, tsc;
 
     uint32_t *out = dram;
     uint32_t *nextOut = dram;
@@ -742,31 +750,15 @@ void IRAM_ATTR iloop_pbi() {
     maxLoopElapsed = 0;
     int elapsed = 0;
     bool enabled = false;
-
-    const bool fakeData = true; //*((uint32_t *)&atariRam[1668]) == 100;
+    bool recentReset = false;
+    uint32_t lastResetLow = 0;
     
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+    tscFall = XTHAL_GET_CCOUNT();
     REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-    
-    while(1) {
-        if (opt.histogram) { 
-            if (loopCount > 5) {
-                elapsed = tsc - tscDataReady;  
-                *out++ = elapsed;
-                if (out == dram_end) { 
-                    dramLoopCount++;
-                    out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
-                    //out = nextOut;
-                    dram_end = out + dma_sz / sizeof(uint32_t);
-                    //__asm__ __volatile__("nop"); // 1 cycle
-                }
-            } else {
-                loopCount++;
-            }
-        }
-        //if (stop) break;
-    
+
+    while(1) {    
         r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
         const uint16_t addr = (r0 & addrMask) >> addrShift;                            
         const uint8_t page = addr >> 10;
@@ -788,15 +780,28 @@ void IRAM_ATTR iloop_pbi() {
                     data = atariRam[addr];
                 }
 #endif
-                __asm__ ("nop"); // needed for timing, causes memory errors.  
-                __asm__ ("nop"); 
+                while(XTHAL_GET_CCOUNT() - tscFall < 50) {}
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
+                // tune for 58-73 ticks to here from tscFall
+
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+                tscFall = XTHAL_GET_CCOUNT();
+                __asm__ ("nop"); 
+                __asm__ ("nop"); 
                 __asm__ ("nop"); 
                 __asm__ ("nop"); 
                 REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+                if (opt.histogram) { 
+                    *out++ = XTHAL_GET_CCOUNT() - tscFall;
+                    if (out == dram_end) { 
+                        dramLoopCount++;
+                        out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
+                        dram_end = out + dma_sz / sizeof(uint32_t);
+                        __asm__("memw");
+                    }
+                }
 
             } else {                                                                    // 2. WRITE 
 #ifdef NO_BANK
@@ -809,12 +814,15 @@ void IRAM_ATTR iloop_pbi() {
                     writeDest = &atariRam[addr];
                 }
 #endif
-                __asm__ ("nop"); // ??? Seems to fix intermittent ROM boot error? 
-                __asm__ ("nop"); 
+                const bool fakeData = *((uint32_t *)&atariRam[1668]) == 100 || recentReset;
+                while(XTHAL_GET_CCOUNT() - tscFall < 60) {}
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
                 do { 
                     r1 = REG_READ(GPIO_IN1_REG);
                 } while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
+                tscFall = XTHAL_GET_CCOUNT();
+                __asm__ ("nop"); 
+                __asm__ ("nop"); 
                 __asm__ ("nop"); 
                 __asm__ ("nop"); 
                 REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
@@ -834,13 +842,23 @@ void IRAM_ATTR iloop_pbi() {
 #endif
             }
         } else {
+            r1 = REG_READ(GPIO_IN1_REG);
+            if ((r1 & resetMask) == 0) {
+                lastResetLow == XTHAL_GET_CCOUNT();
+                recentReset = true;
+            } else if (recentReset && XTHAL_GET_CCOUNT() - lastResetLow > 5 * 240 * 1000000) {
+                recentReset = false;
+            }
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+            tscFall = XTHAL_GET_CCOUNT();
+            __asm__ ("nop"); 
+            __asm__ ("nop"); 
             __asm__ ("nop"); 
             __asm__ ("nop"); 
             REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         }
-//         __asm__ __volatile__("nop"); // 1 cycle
+         __asm__ __volatile__("nop"); // 1 cycle
     }
 }
 
