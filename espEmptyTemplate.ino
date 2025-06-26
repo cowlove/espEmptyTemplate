@@ -797,10 +797,6 @@ void IRAM_ATTR iloop_bitResponse() {
 void IRAM_ATTR iloop_pbi() {	
     uint32_t r0, r1;
     int ram = 0;
-
-    uint32_t *out = dram;
-    uint32_t *nextOut = dram;
-    uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
     int loopCount = 0;
 
     static const uint32_t bankMask = 0xff00, bankVal = 0x0000;
@@ -831,23 +827,20 @@ void IRAM_ATTR iloop_pbi() {
 
         if ((r0 & (refreshMask | casInh_Mask)) == (refreshMask | casInh_Mask)) {
             uint16_t addr = (r0 & addrMask) >> addrShift;
-
-            uint8_t *ramAddr;
-#define BANK_SWITCH
-#ifdef BANK_SWITCH                            
-            if ((addr & bankMask) == bankVal) { 
-                ramAddr = &bank[addr & ~bankMask];
-            } else {
-                ramAddr = &atariRam[addr];
-            }
-#else
-            ramAddr = &atariRam[addr];
-#endif
-
+            uint16_t *ramAddr;
+            
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data;
-                data = *ramAddr;
-
+#define BANK_SWITCH
+#ifdef BANK_SWITCH
+                if ((addr & bankMask) == bankVal) { 
+                    data = bank[addr & ~bankMask];
+                } else {
+                    data = atariRam[addr];
+                }
+#else
+                data = atariRam[addr];
+#endif
                 //if (addr == 1666 && recentReset) data += 1;
 
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
@@ -857,9 +850,20 @@ void IRAM_ATTR iloop_pbi() {
                 hist.add(tscTestA, 1);
                 // timing 72-75 ticks to here
             } else {
+                
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0);                  // 2. WRITE
-                __asm__("nop");
-                *ramAddr = REG_READ(GPIO_IN1_REG) >> dataShift;
+                //__asm__("nop");
+                uint16_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
+#ifdef BANK_SWITCH
+                if ((addr & bankMask) == bankVal) { 
+                    bank[addr & ~bankMask] = data;
+                } else {
+                    atariRam[addr] = data;
+                }
+#else
+                atariRam[addr] = data;
+#endif
+
                 hist.add(tscFall, 0);
             }
         } else {
@@ -872,6 +876,12 @@ void IRAM_ATTR iloop_pbi() {
             }
             hist.add(tscFall, 0);
         }
+#if 0 
+
+        if (elapsed > 200) lateCount++;
+        if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
+        if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
+#endif
         //__asm("nop");
     } while(!stop);
 }
