@@ -55,7 +55,7 @@ static const struct {
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
    bool maskCore0Int  = 0;
-   float histRunSec = 60;
+   float histRunSec = 30;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -816,8 +816,6 @@ void IRAM_ATTR iloop_pbi() {
     bool enabled = false;
     bool recentReset = false;
     uint32_t lastResetLow = 0;
-    uint8_t *pendingWrite = NULL;
-    uint16_t addr = 0;
 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
     do {} while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
@@ -827,19 +825,8 @@ void IRAM_ATTR iloop_pbi() {
     // works just reading right after the rising clock edge 
     do {    
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-#if 0
-        do { r1 = REG_READ(GPIO_IN1_REG); } while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
-#else
-        //while(XTHAL_GET_CCOUNT() - tscFall < 70) {}
-        r1 = REG_READ(GPIO_IN1_REG);
-        do {} while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
-#endif
+        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         tscFall = XTHAL_GET_CCOUNT();
-        uint8_t data = r1 >> dataShift;
-        if (pendingWrite != NULL) {
-            if (addr == 1665) data += 1;
-            *pendingWrite = data;
-        }
 #if 1
         hist.add(tscFall, 0);
 #else
@@ -848,16 +835,21 @@ void IRAM_ATTR iloop_pbi() {
         __asm__("nop");
         __asm__("nop");
 #endif
+        __asm__("nop");
+        __asm__("nop");
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-        pendingWrite = NULL;
 
         __asm__("nop");
         __asm__("nop");
+        __asm__("nop");
+        __asm__("nop");
+
 
         r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
 
         if ((r0 & (refreshMask | casInh_Mask)) == (refreshMask | casInh_Mask)) {
-            addr = (r0 & addrMask) >> addrShift;                            
+            uint16_t addr = (r0 & addrMask) >> addrShift;
+            uint8_t *ramAddr = &atariRam[addr];                            
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data;
 #ifdef BANK_ENABLE
@@ -867,19 +859,21 @@ void IRAM_ATTR iloop_pbi() {
                     data = atariRam[addr];
                 }
 #else
-                data = atariRam[addr];
+                data = *ramAddr;
 #endif
-                //while(XTHAL_GET_CCOUNT() - tscFall < 42) {}
+                //if (addr == 1666 && recentReset) data += 1;
+
+                while(XTHAL_GET_CCOUNT() - tscFall < 42) {}
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
-                //tscTestA = XTHAL_GET_CCOUNT();
-                //hist.add(tscTestA, 1);
+                tscTestA = XTHAL_GET_CCOUNT();
+                hist.add(tscTestA, 1);
                 // timing 72-75 ticks to here
             } else {
-#if 0
+#if 1
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0);                  // 2. WRITE
-                r1 = REG_READ(GPIO_IN1_REG);
-                atariRam[addr] = r1 >> dataShift;
+                __asm__("nop");
+                *ramAddr = REG_READ(GPIO_IN1_REG) >> dataShift;
 #else   
 #ifdef BANK_ENABLE
                 #error no bank enable
@@ -898,7 +892,7 @@ void IRAM_ATTR iloop_pbi() {
             if ((r1 & resetMask) == 0) {
                 lastResetLow == XTHAL_GET_CCOUNT();
                 recentReset = true;
-            } else if (recentReset && XTHAL_GET_CCOUNT() - lastResetLow > 5 * 240 * 1000000) {
+            } else if (recentReset && XTHAL_GET_CCOUNT() - lastResetLow > 3 * 240 * 1000000) {
                 recentReset = false;
                 cumulativeResets++;
             }
