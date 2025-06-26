@@ -54,7 +54,7 @@ static const struct {
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
    bool maskCore0Int  = 0;
-   float histRunSec = 60;
+   float histRunSec = -60;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -374,7 +374,7 @@ void IRAM_ATTR threadFunc(void *) {
             startTsc = XTHAL_GET_CCOUNT();
             if(++elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
             if(atariRam[1666] == 100 && atariRam[1667] == 99 && atariRam[1668] == 93) break;
-            if(cumulativeResets > 5) break;
+            if(cumulativeResets > 2) break;
         }
     }
 
