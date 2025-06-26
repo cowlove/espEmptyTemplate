@@ -42,7 +42,7 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-   bool fakeClock     = 0;
+   bool fakeClock     = 1;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
    bool tcpSendPsram  = 0;
@@ -54,7 +54,7 @@ static const struct {
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
    bool maskCore0Int  = 0;
-   float histRunSec = -600;
+   float histRunSec = 10;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -366,6 +366,7 @@ void IRAM_ATTR threadFunc(void *) {
     //_xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi; 
     portENABLE_INTERRUPTS();
     enableCore0WDT();
+    yield();
     //enableLoopWDT();
 #endif
     //neopixelWrite(ledPin, 8, 0, 0);
@@ -398,7 +399,10 @@ void IRAM_ATTR threadFunc(void *) {
         //for(uint32_t *p = psram; p < psram + (psram_sz - dma_sz * 2) / sizeof(uint32_t); p += dma_sz / sizeof(uint32_t)) {
     }
 
-    if (opt.histogram) { 
+    if (opt.histogram) {
+        printf("histogram:\n"); 
+        SPIFFSVariable<vector<string>> hist("/histogram", {});
+        vector<string> v; 
         int first = 0, last = 0;
         for(int i = 1; i < sizeof(buckets) / sizeof(buckets[0]); i++) { 
             if (buckets[i] > 0) last = i;
@@ -407,9 +411,12 @@ void IRAM_ATTR threadFunc(void *) {
             if (buckets[i] > 0) first = i;
         }
         for(int i = first; i <= last; i++) { 
-            printf("%d %d BUCKETS\n", i, buckets[i]);
+            v.push_back(sfmt("%d %d BUCKETS", i, buckets[i]));
         }
-        printf("range %d-%d, jitter %d\n", first, last, last - first);
+        v.push_back(sfmt("range %d-%d, jitter %d", first, last, last - first));
+        hist = v;
+        for(auto s : v) 
+            printf("%s\n", s.c_str());
     }
     
     string s;
@@ -458,7 +465,17 @@ void setup() {
     pinMode(ledPin, OUTPUT);
     digitalWrite(ledPin, 1);
     neopixelWrite(ledPin, 0, 10, 0);
+    delay(500);
     printf("setup()\n");
+
+    if (1) { 
+        SPIFFSVariableESP32Base::begin();
+        SPIFFSVariable<vector<string>> hist("/histogram", {});
+        vector<string> v = hist;
+        for(auto s : v) { 
+            printf("%s\n", s.c_str());
+        }
+    }
     if (1) { 
         uint32_t val = 0x10000000;
         uint32_t mask = 0x10000000;
@@ -764,7 +781,7 @@ void IRAM_ATTR iloop_pbi() {
     } while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
     lastTsc = XTHAL_GET_CCOUNT();
 
-    while(1) {    
+    do {    
         //while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         do { 
@@ -840,7 +857,7 @@ void IRAM_ATTR iloop_pbi() {
         if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
 #endif
 
-    }
+    } while(!stop);
 }
 
 void IRAM_ATTR iloop_timings1() {
