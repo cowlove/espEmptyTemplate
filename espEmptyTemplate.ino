@@ -323,6 +323,7 @@ void IRAM_ATTR threadFunc(void *) {
 
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     int maxBufsUsed = 0;
+    neopixelWrite(ledPin, 0, 8, 0);
 
 #define DISABLE_CORE0_INT   // reduces jitter from ~44(49-94) to ~17(74-91) ticks, avoids occassional missed 2Mhz edges 
 #ifdef DISABLE_CORE0_INT
@@ -401,7 +402,6 @@ void IRAM_ATTR threadFunc(void *) {
     yield();
     //enableLoopWDT();
 #endif
-    //neopixelWrite(ledPin, 8, 0, 0);
     //while(1) { delay(10); }
     Serial.printf("STOPPED. max dma bufs in use %d\n", maxBufsUsed);
     Serial.flush();
@@ -409,6 +409,7 @@ void IRAM_ATTR threadFunc(void *) {
     while(cbCount < psramLoopCount && micros() - startUsec < 1000000) {
         delay(50);
     }
+    neopixelWrite(ledPin, 8, 0, 0);
     printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x hri %d hwi %d minLoop %d maxLoop %d jit %d late %d\n", 
         millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc, hist.histReadIdx, hwi, minLoopE, 
         maxLoopE, maxLoopE - minLoopE, loopElapsedLate);
@@ -470,6 +471,7 @@ void IRAM_ATTR threadFunc(void *) {
         printf("SPIFFS var finished\n"); 
         h = v;
         printf("Done writing to flash\n"); 
+        neopixelWrite(ledPin, 0, 0, 8);
     }
     
     string s;
@@ -829,14 +831,6 @@ void IRAM_ATTR iloop_pbi() {
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         __asm__("nop"); // needs at least 1 nop between REG_WRITE/REG_READ(?) 
-        __asm__("nop");
-        __asm__("nop");
-        __asm__("nop");
-        __asm__("nop");
-        __asm__("nop");
-        __asm__("nop");
-        __asm__("nop");
-        __asm__("nop");
         uint32_t r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
         if ((r0 & (refreshMask | casInh_Mask)) == (refreshMask | casInh_Mask)) {
             uint16_t addr = (r0 & addrMask) >> addrShift;
@@ -851,9 +845,9 @@ void IRAM_ATTR iloop_pbi() {
                 hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 1);
                 // timing 72-75 ticks to here
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-
             } else {
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  // 2. WRITE
+                __asm__("nop");
                 __asm__("nop");
                 __asm__("nop");
                 __asm__("nop");
@@ -861,7 +855,6 @@ void IRAM_ATTR iloop_pbi() {
                 uint16_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
                 *ramAddr = data;
                 hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 2);
-                //while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             }
         } else {
 #if 1 
