@@ -42,7 +42,7 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-   bool fakeClock     = 1;
+   bool fakeClock     = 0;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
    bool tcpSendPsram  = 0;
@@ -54,7 +54,7 @@ static const struct {
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
    bool maskCore0Int  = 0;
-   float histRunSec = 10;
+   float histRunSec = -20;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -378,7 +378,7 @@ void IRAM_ATTR threadFunc(void *) {
         delay(50);
     }
     printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x hri %d hwi %d minLoop %d maxLoop %d jit %d late %d\n", 
-        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  histWriteIdx, histReadIdx, minLoopE, 
+        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc,  histReadIdx, hwi, minLoopE, 
         maxLoopE, maxLoopE - minLoopE, loopElapsedLate);
  
     if (opt.dumpSram) {
