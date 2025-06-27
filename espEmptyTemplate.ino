@@ -43,8 +43,13 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
+#if 1
    bool fakeClock     = 0;
-   float histRunSec   = -30;
+   float histRunSec   = 30;
+#else 
+   bool fakeClock     = 1;
+   float histRunSec   = 30;
+#endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
    bool tcpSendPsram  = 0;
@@ -179,43 +184,46 @@ void busyWaitCCount(uint32_t cycles) {
     while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
 }
 
+void busywait(float sec) {
+    uint32_t tsc = XTHAL_GET_CCOUNT();
+    while(XTHAL_GET_CCOUNT() - tsc < sec * 240 * 1000000) {};
+}
+
+#pragma GCC optimize("O1") // avoid register write combining
 void NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
     //busyWaitCCount(100);
     //return;
 
     int color[3] = {green_val, red_val, blue_val};
-    // 100 == all white
-    // 80 == green too bright 
-    // 20 == green but too bright, 
-    // 10 == all white
-    int longCycles = 190;
-    int shortCycles = 64;
-
+    int longCycles = 175;
+    int shortCycles = 90;
     uint32_t bitMask = 1 << (pin - 32); 
     int i = 0;
     for (int col = 0; col < 3; col++) {
         for (int bit = 0; bit < 8; bit++) {
             if ((color[col] & (1 << (7 - bit)))) {
                 // HIGH bit
-                digitalWrite(pin, 1);
+                //REG_WRITE(GPIO_OUT1_W1TS_REG, bitMask);
+                dedic_gpio_cpu_ll_write_all(1);
                 busyWaitCCount(longCycles);
-                digitalWrite(pin, 0);
+                dedic_gpio_cpu_ll_write_all(0);
                 busyWaitCCount(shortCycles);
             } else {
                 // LOW bit
-                digitalWrite(pin, 1);
+                dedic_gpio_cpu_ll_write_all(1);
                 busyWaitCCount(shortCycles);
-                digitalWrite(pin, 0);
+                dedic_gpio_cpu_ll_write_all(0);
                 busyWaitCCount(longCycles);
             }
             i++;
         }
     }
 }
+#pragma GCC pop_options
 
 // socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
-    neopixelWrite(ledPin, 0, 0, 8);
+    //neopixelWrite(ledPin, 0, 0, 8);
     //char *host = "10.250.250.240";
     char *host = "192.168.68.131";
     ////WiFi.begin("Station54", "Local1747"); host = "10.250.250.240";
@@ -225,7 +233,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     WiFiClient wc;
     static const int txSize = 1024;
    
-    neopixelWrite(ledPin, 8, 0, 8);
+    //neopixelWrite(ledPin, 8, 0, 8);
     int r = wc.connect(host, 9999);
     printf("connect() returned %d\n", r);
     uint32_t startMs = millis();
@@ -247,13 +255,13 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
             printf("."); 
             fflush(stdout);
         }
-        neopixelWrite(ledPin, 0, 0, (count & 127) + 8);
+        //neopixelWrite(ledPin, 0, 0, (count & 127) + 8);
         if (resetWdt) wdtReset();
         yield();
     }
     printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
     fflush(stdout);
-    neopixelWrite(ledPin, 0, 8, 0);
+    //neopixelWrite(ledPin, 0, 8, 0);
     return true;
 }
 
@@ -261,55 +269,39 @@ struct Hist2 {
     static const int maxBucket = 256; // must be power of 2
     int buckets[maxBucket];
     inline void add(uint32_t x) { buckets[x & (maxBucket - 1)]++; }
-    Hist2() { bzero(buckets, sizeof(buckets)); }
+    Hist2() { clear(); }
+    void clear() { bzero(buckets, sizeof(buckets)); }
 };
 
-Hist2 profilers[3];
-
-struct TimingHistogram { 
-    static const int maxBucket = 300;
-    static const int maxChannel = 4;
-    static int buckets[maxBucket][maxChannel];
-
-    static const bool enable = true;
-    static const int histBufSz = 4 * 1024; // must be power of 2
-    int histWriteIdx = 0, histReadIdx = 0;
-    uint32_t histBuf[histBufSz];
-    inline void add(const uint32_t v, const int c) {
-        if (enable) {  
-            histBuf[histWriteIdx] = (v & 0xffff) | (c << 16);
-            histWriteIdx = (histWriteIdx + 1) & (histBufSz - 1);
-        }
-    }
-    inline void add2(const uint32_t v1, const int c1, const uint32_t v2, const uint32_t c2) {
-        if (enable) {  
-            histBuf[histWriteIdx] = (v1 & 0xffff) | (c1 << 16);
-            histBuf[histWriteIdx + 1] = (v2 & 0xffff) | (c2 << 16);
-            histWriteIdx = (histWriteIdx + 2) & (histBufSz - 1);
-        }
-    }
-    inline bool available() const { return histWriteIdx != histReadIdx; }
-    inline std::pair<uint32_t,int> get() {
-        if (firstEntry) {
-            lastStartTsc = histBuf[histReadIdx] & 0xffff;
-            firstEntry = false;
-        }
-        int chan = histBuf[histReadIdx] >> 16;
-        uint16_t val = ((uint16_t)(histBuf[histReadIdx] & 0xffff)) - lastStartTsc;
-        if (chan == 0) lastStartTsc = histBuf[histReadIdx] & 0xffff;
-        histReadIdx = (histReadIdx + 1) & (histBufSz - 1);
-        return std::pair<uint32_t,int>(val, chan);
-    }
-    bool firstEntry = true;
-    uint16_t lastStartTsc;
-} hist;
-int TimingHistogram::buckets[TimingHistogram::maxBucket][TimingHistogram::maxChannel] = {};
+static const int numProfilers = 4;
+Hist2 profilers[numProfilers];
 
 void IRAM_ATTR threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
 
     int elapsedSec = 0;
     int pi = 0;
+    pinMode(ledPin, OUTPUT);
+    digitalWrite(ledPin, 0);
+
+    if(1) { 
+        int bundleB_gpios[] = {ledPin};
+        dedic_gpio_bundle_config_t bundleB_config = {
+            .gpio_array = bundleB_gpios,
+            .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
+            .flags = {
+                .out_en = 1
+            },
+        };
+        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
+        for(int i = 0; i < sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]); i++) { 
+            //gpio_set_drive_capability((gpio_num_t)bundleB_gpios[i], GPIO_DRIVE_CAP_MAX);
+        }
+    }
+
+    NEWneopixelWrite(ledPin,255,255,255);
+    delay(100);
+    NEWneopixelWrite(ledPin,0,0,0);
 
     volatile int *drLoopCount = &dramLoopCount;
     async_memcpy_config_t config {
@@ -320,29 +312,33 @@ void IRAM_ATTR threadFunc(void *) {
     };
     async_memcpy_handle_t handle = NULL;
 
-    bzero(hist.buckets, sizeof(hist.buckets));
-
     if (esp_async_memcpy_install(&config, &handle) != ESP_OK) {
         printf("Failed to install async memcpy driver.\n");
         return;
     }
 
     int maxBufsUsed = 0;
-    neopixelWrite(ledPin, 0, 8, 0);
+    //neopixelWrite(ledPin, 0, 8, 0);
     
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     if (opt.maskCore0Int) { 
-        //disableLoopWDT();
         disableCore0WDT();
+        //printf("CORE0: disabling interrupts\n"); 
+        //fflush(stdout);
+        //delay(100);
+        //yield();
+        //busywait(.5);
         portDISABLE_INTERRUPTS();
         _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
         //uint32_t oldint;
         //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
     }
     int cycleCount = 0;
-    int led; 
+    int led;
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     while(1) { 
+        //cycleCount++;
+        //        NEWneopixelWrite(ledPin, 0, 22, 0);
         if (psramLoopCount != *drLoopCount) {
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
             if (*drLoopCount - psramLoopCount >= dma_bufs - 2) { 
@@ -373,6 +369,8 @@ void IRAM_ATTR threadFunc(void *) {
         }
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
+            //dedic_gpio_cpu_ll_write_all(0);
+            //REG_WRITE(GPIO_OUT1_REG, 0);
             if (0) { 
                 NEWneopixelWrite(ledPin, 0, 0, led++ & 0xff);
                 uint64_t totalEvents = 0;
@@ -384,7 +382,7 @@ void IRAM_ATTR threadFunc(void *) {
             //printf("sec %d\n", elapsedSec);
             elapsedSec++;
             if (elapsedSec == 10) { 
-                bzero(profilers[0].buckets, sizeof(profilers[0].buckets));
+                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
             if(atariRam[1666] == 100 && atariRam[1667] == 99 && atariRam[1668] == 93) break;
@@ -395,7 +393,6 @@ void IRAM_ATTR threadFunc(void *) {
 
     stop = true;
     int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
-    int hwi = (volatile int)hist.histWriteIdx;
     startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 24 * 1000000) {}
 
@@ -416,9 +413,9 @@ void IRAM_ATTR threadFunc(void *) {
     printf("Total samples %lld implies %.2f sec sampling\n",
         totalEvents, 1.0 * totalEvents / 1.8 / 1000000);
 
-    neopixelWrite(ledPin, 8, 0, 0);
-    printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x hri %d hwi %d minLoop %d maxLoop %d jit %d late %d\n", 
-        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc, hist.histReadIdx, hwi, minLoopE, 
+    NEWneopixelWrite(ledPin, 8, 0, 0);
+    printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x %d minLoop %d maxLoop %d jit %d late %d\n", 
+        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc, minLoopE, 
         maxLoopE, maxLoopE - minLoopE, loopElapsedLate);
  
     if (opt.dumpSram) {
@@ -441,9 +438,8 @@ void IRAM_ATTR threadFunc(void *) {
 
     if (opt.histogram) {
         vector<string> v; 
-        int profCount = sizeof(profilers)/sizeof(profilers[0]);
         int first = profilers[0].maxBucket, last = 0;
-        for (int c = 0; c < profCount; c++) { 
+        for (int c = 0; c < numProfilers; c++) { 
             for(int i = 1; i < profilers[c].maxBucket; i++) { 
                 if (profilers[c].buckets[i] > 0 && i > last) last = i;
             }
@@ -453,14 +449,14 @@ void IRAM_ATTR threadFunc(void *) {
         }
         for(int i = first; i <= last; i++) {
             string s = sfmt("% 3d ", i);
-            for(int c = 0; c < profCount; c++) {
+            for(int c = 0; c < numProfilers; c++) {
                 s += sfmt("% 8d ", profilers[c].buckets[i]);
             }
             s += " HIST";
             v.push_back(s);
         }
 
-        for (int c = 0; c < profCount; c++) {
+        for (int c = 0; c < numProfilers; c++) {
             first = last = 0; 
             for(int i = 1; i < profilers[c].maxBucket; i++) { 
                 if (profilers[c].buckets[i] > 0) last = i;
@@ -476,7 +472,6 @@ void IRAM_ATTR threadFunc(void *) {
         v.push_back(sfmt("Total samples %lld implies %.2f sec sampling\n",
                     totalEvents, 1.0 * totalEvents / 1.8 / 1000000));
 
-
         for(auto s : v) 
             printf("%s\n", s.c_str());
         printf("Writing to flash\n"); 
@@ -486,7 +481,7 @@ void IRAM_ATTR threadFunc(void *) {
         printf("SPIFFS var finished\n"); 
         h = v;
         printf("Done writing to flash\n"); 
-        neopixelWrite(ledPin, 0, 0, 8);
+        //neopixelWrite(ledPin, 0, 0, 8);
     }
     
     printf("DUMP %.2f\n", millis() / 1000.0);
@@ -531,27 +526,25 @@ void IRAM_ATTR threadFunc(void *) {
         //printf("CORE0 idle\n");
         delay(1000); 
         yield();
-        neopixelWrite(ledPin, millis() % 20, 0, 0);
+        NEWneopixelWrite(ledPin, millis() % 20, 0, 0);
     }
 }
 
 void setup() {
     for(auto i : pins) pinMode(i, INPUT);
-    pinMode(ledPin, OUTPUT);
-    digitalWrite(ledPin, 1);
-    neopixelWrite(ledPin, 0, 10, 0);
     delay(500);
-    //Serial.begin(115200);
+    Serial.begin(115200);
     printf("setup()\n");
-
-    while(0) { 
-        printf("setup()\n");
-        //rgbLedWriteBitBang_NO(ledPin, 0, 10, 0);
-        //neopixelWrite(ledPin, 0, 10, 0);
-        delay(500);
-        //neopixelWrite(ledPin, 10, 0, 0);
-        //rgbLedWriteBitBang_NO(ledPin, 10, 0, 0);
-        delay(500);
+    if (1) { 
+        pinMode(ledPin, OUTPUT);
+        digitalWrite(ledPin, 0);
+        int color = 0;
+        while(1) {
+            //printf("neopixel\n");
+            NEWneopixelWrite(ledPin, 0,0,color++ % 63);
+            delay(10);
+            if (millis() > 2000) break;
+        }
     }
 
     if (1) { 
@@ -630,21 +623,17 @@ void setup() {
         ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleIn));
 
         if (opt.bitResponse) { // can't use direct GPIO_ENABLE or GPIO_OUT registers after setting up dedic_gpio_bundle 
-                int bundleB_gpios[] = {data0Pin, data0Pin + 1, data0Pin + 2, data0Pin + 3, data0Pin + 4, data0Pin + 5, data0Pin + 6, data0Pin + 7};
-                dedic_gpio_bundle_config_t bundleB_config = {
+            int bundleB_gpios[] = {data0Pin, data0Pin + 1, data0Pin + 2, data0Pin + 3, data0Pin + 4, data0Pin + 5, data0Pin + 6, data0Pin + 7};
+            dedic_gpio_bundle_config_t bundleB_config = {
                 .gpio_array = bundleB_gpios,
                 .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
-                .flags = {
-                    .out_en = 1
-                },
+                .flags = { .out_en = 1 },
             };
             ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
             REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                         //    enable DATA lines for output
             for(int i = 0; i < sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]); i++) { 
                 gpio_set_drive_capability((gpio_num_t)bundleB_gpios[i], GPIO_DRIVE_CAP_MAX);
             }
-
-
         }
     }
     if (opt.fakeClock) { // simulate clock signal 
@@ -876,7 +865,6 @@ void IRAM_ATTR iloop_pbi() {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
                 profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
-                //hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 1); // 33 cycles
                 // timing 72-75 ticks to here
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             } else {
@@ -889,7 +877,6 @@ void IRAM_ATTR iloop_pbi() {
                 uint16_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
                 *ramAddr = data;
                 profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
-                //hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 2);
             }
         } else {
 #if 1 
@@ -905,7 +892,6 @@ void IRAM_ATTR iloop_pbi() {
             }
 #endif
             profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
-            //hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 3);
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         }
         profilers[0].add(tscFall - lastTscFall);  // currently 15 cycles 
@@ -1047,9 +1033,12 @@ void loop() {
             delay(10);
         }
     }
-
-    //Serial.printf("loop() disabling interrupts\n");
+    //printf("CORE1: testing busywait\n");
+    //busywait(.1);
+    //printf("CORE1: disabling interrupts\n");
+    //fflush(stdout);
     //Serial.flush();
+    //busywait(1.0);
     //disableCore1WDT();
     //disableLoopWDT();
     portDISABLE_INTERRUPTS();
