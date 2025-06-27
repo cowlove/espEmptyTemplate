@@ -45,7 +45,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 #if 1
    bool fakeClock     = 0;
-   float histRunSec   = 120;
+   float histRunSec   = -120;
 #else 
    bool fakeClock     = 1;
    float histRunSec   = 30;
@@ -270,11 +270,17 @@ struct Hist2 {
     int buckets[maxBucket];
     inline void add(uint32_t x) { buckets[x & (maxBucket - 1)]++; }
     Hist2() { clear(); }
+    int64_t count() {
+        int64_t sum = 0; 
+        for(int i = 0; i < maxBucket; i++) sum += buckets[i];
+        return sum;
+    }
     void clear() { bzero(buckets, sizeof(buckets)); }
 };
 
 static const int numProfilers = 4;
 Hist2 profilers[numProfilers];
+int ramReads = 0, ramWrites = 0;
 
 void IRAM_ATTR threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
@@ -333,8 +339,7 @@ void IRAM_ATTR threadFunc(void *) {
         //uint32_t oldint;
         //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
     }
-    int cycleCount = 0;
-    int led;
+    int lastCycleCount = 0;
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     while(1) { 
         //cycleCount++;
@@ -368,21 +373,16 @@ void IRAM_ATTR threadFunc(void *) {
         }
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
-            //dedic_gpio_cpu_ll_write_all(0);
-            //REG_WRITE(GPIO_OUT1_REG, 0);
-            if (0) { 
-                NEWneopixelWrite(ledPin, 0, 0, led++ & 0xff);
-                uint64_t totalEvents = 0;
-                for(int i = 0; i < profilers[0].maxBucket; i++)
-                    totalEvents += profilers[0].buckets[i];
-                printf("Total samples %lld implies %.2f sec sampling\n",
-                    totalEvents, 1.0 * totalEvents / 1.8 / 1000000);
-            }
-            //printf("sec %d\n", elapsedSec);
             elapsedSec++;
-            if (0) { 
+            if (1) { 
                 if (elapsedSec & 1) {
-                    NEWneopixelWrite(ledPin, 0, 22, 0);
+                    int cycles = (volatile int)ramReads;
+                    if (cycles - lastCycleCount > 1700000) {
+                        NEWneopixelWrite(ledPin, 0, 22, 0);
+                    } else { 
+                        NEWneopixelWrite(ledPin, 0, 0, 0);
+                    }
+                    lastCycleCount = cycles;
                 } else { 
                     NEWneopixelWrite(ledPin, 22, 0, 0);
                 }
@@ -416,8 +416,8 @@ void IRAM_ATTR threadFunc(void *) {
     uint64_t totalEvents = 0;
     for(int i = 0; i < profilers[0].maxBucket; i++)
         totalEvents += profilers[0].buckets[i];
-    printf("Total samples %lld implies %.2f sec sampling\n",
-        totalEvents, 1.0 * totalEvents / 1.8 / 1000000);
+    printf("Total samples %lld implies %.2f sec sampling. Total reads %d\n",
+        totalEvents, 1.0 * totalEvents / 1.8 / 1000000, ramReads);
 
     NEWneopixelWrite(ledPin, 8, 0, 0);
     printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x %d minLoop %d maxLoop %d jit %d late %d\n", 
@@ -530,9 +530,9 @@ void IRAM_ATTR threadFunc(void *) {
     printf("CORE0 idle\n");
     while(1) { 
         //printf("CORE0 idle\n");
-        delay(1000); 
+        delay(10); 
         yield();
-        NEWneopixelWrite(ledPin, millis() % 20, 0, 0);
+        NEWneopixelWrite(ledPin, 0, 0, ((millis() / 100) % 2) * 10);
     }
 }
 
@@ -876,9 +876,10 @@ void IRAM_ATTR iloop_pbi() {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask); //    enable DATA lines for output
                 //REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));            //    output data to data bus
+                // timing requirement: 70-80 ticks to here
                 profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
-                // timing 72-75 ticks to here
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
+            
             } else {
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  // 2. WRITE
                 if (stop) break;
@@ -889,9 +890,9 @@ void IRAM_ATTR iloop_pbi() {
                 uint16_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
                 *ramAddr = data;
                 profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                //ramWrites++;
             }
         } else {
-#if 1 
             uint32_t r1 = REG_READ(GPIO_IN1_REG);
             currentResetValue = (r1 & resetMask) != 0;
             if ((r1 & resetMask) == 0) {
@@ -902,8 +903,8 @@ void IRAM_ATTR iloop_pbi() {
                 cumulativeResets++;
                 __asm__ __volatile__("nop");
             }
-#endif
-            profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+            ramReads++; // had to tuck fake ramReads++ here, no time in read loop.  Had to exclude profiler                
+            //profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         }
         profilers[0].add(tscFall - lastTscFall);  // currently 15 cycles 
