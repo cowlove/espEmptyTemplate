@@ -45,7 +45,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 #if 1
    bool fakeClock     = 0;
-   float histRunSec   = 30;
+   float histRunSec   = 120;
 #else 
    bool fakeClock     = 1;
    float histRunSec   = 30;
@@ -338,7 +338,6 @@ void IRAM_ATTR threadFunc(void *) {
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     while(1) { 
         //cycleCount++;
-        //        NEWneopixelWrite(ledPin, 0, 22, 0);
         if (psramLoopCount != *drLoopCount) {
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
             if (*drLoopCount - psramLoopCount >= dma_bufs - 2) { 
@@ -381,6 +380,13 @@ void IRAM_ATTR threadFunc(void *) {
             }
             //printf("sec %d\n", elapsedSec);
             elapsedSec++;
+            if (0) { 
+                if (elapsedSec & 1) {
+                    NEWneopixelWrite(ledPin, 0, 22, 0);
+                } else { 
+                    NEWneopixelWrite(ledPin, 22, 0, 0);
+                }
+            }
             if (elapsedSec == 10) { 
                 for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
@@ -621,7 +627,15 @@ void setup() {
             },
         };
         ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleIn));
-
+        if (0) { 
+            int bundleB_gpios[] = {ledPin};
+            dedic_gpio_bundle_config_t bundleB_config = {
+                .gpio_array = bundleB_gpios,
+                .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
+                .flags = { .out_en = 1 },
+            };
+            ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
+        }
         if (opt.bitResponse) { // can't use direct GPIO_ENABLE or GPIO_OUT registers after setting up dedic_gpio_bundle 
             int bundleB_gpios[] = {data0Pin, data0Pin + 1, data0Pin + 2, data0Pin + 3, data0Pin + 4, data0Pin + 5, data0Pin + 6, data0Pin + 7};
             dedic_gpio_bundle_config_t bundleB_config = {
@@ -631,9 +645,6 @@ void setup() {
             };
             ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
             REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                         //    enable DATA lines for output
-            for(int i = 0; i < sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]); i++) { 
-                gpio_set_drive_capability((gpio_num_t)bundleB_gpios[i], GPIO_DRIVE_CAP_MAX);
-            }
         }
     }
     if (opt.fakeClock) { // simulate clock signal 
@@ -853,6 +864,7 @@ void IRAM_ATTR iloop_pbi() {
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         __asm__("nop"); // needs at least 1 nop between REG_WRITE/REG_READ(?) 
         uint32_t r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
+        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);          
         if ((r0 & (casInh_Mask)) == (casInh_Mask)) {
             uint16_t addr = (r0 & addrMask) >> addrShift;
             uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
@@ -860,16 +872,16 @@ void IRAM_ATTR iloop_pbi() {
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data = *ramAddr;
                 //if (addr == 1016 && recentReset) data = 1;
-                if (stop) break;
-                while(tscFall - XTHAL_GET_CCOUNT() < 70) {}
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
-                REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
+                //while(tscFall - XTHAL_GET_CCOUNT() < 70) {}
+                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask); //    enable DATA lines for output
+                //REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
+                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));            //    output data to data bus
                 profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
                 // timing 72-75 ticks to here
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             } else {
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  // 2. WRITE
-                __asm__("nop");
+                if (stop) break;
                 __asm__("nop");
                 __asm__("nop");
                 __asm__("nop");
