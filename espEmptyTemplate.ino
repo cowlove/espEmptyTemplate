@@ -44,6 +44,7 @@
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
    bool fakeClock     = 0;
+   float histRunSec   = -30;
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
    bool tcpSendPsram  = 0;
@@ -54,8 +55,7 @@ static const struct {
    bool logicAnalyzer = 0;
    bool busAnalyzer   = 0;
    bool bitResponse   = 0;
-   bool maskCore0Int  = 0;
-   float histRunSec   = -30;
+   bool maskCore0Int  = 1;
 } opt;
 
 // *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
@@ -136,7 +136,7 @@ volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
 static const int dma_sz = 4096 - 64;
-static const int dma_bufs = 8; // must be power of 2
+static const int dma_bufs = 4; // must be power of 2
 static const int dram_sz = dma_sz * dma_bufs;
 
 uint32_t *dram;
@@ -155,7 +155,7 @@ bool stop = false;
 dedic_gpio_bundle_handle_t bundleIn, bundleOut;
 uint32_t lastAddr = -1;
 volatile int cumulativeResets = 0;
-volatile int currentResetValue = 0;
+volatile int currentResetValue = 1;
 
 JStuff j;
 
@@ -174,12 +174,12 @@ static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*
     return false;
 }
 
-void busyWaitCCount(int cycles) { 
+void busyWaitCCount(uint32_t cycles) { 
     uint32_t tsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
 }
 
-void rgbLedWriteBitBang_NO(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
+void NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
     //busyWaitCCount(100);
     //return;
 
@@ -188,25 +188,24 @@ void rgbLedWriteBitBang_NO(uint8_t pin, uint8_t red_val, uint8_t green_val, uint
     // 80 == green too bright 
     // 20 == green but too bright, 
     // 10 == all white
-    int tune = 30;
-    int longCycles = (int)(0.8 * 240) - tune;
-    int shortCycles = (int)(0.4 * 240) - tune;
+    int longCycles = 190;
+    int shortCycles = 64;
 
-    uint32_t bitMask = 1 << (47 - 32); 
+    uint32_t bitMask = 1 << (pin - 32); 
     int i = 0;
     for (int col = 0; col < 3; col++) {
         for (int bit = 0; bit < 8; bit++) {
             if ((color[col] & (1 << (7 - bit)))) {
                 // HIGH bit
-                REG_WRITE(GPIO_OUT1_REG, REG_READ(GPIO_OUT1_REG) | bitMask);
+                digitalWrite(pin, 1);
                 busyWaitCCount(longCycles);
-                REG_WRITE(GPIO_OUT1_REG, REG_READ(GPIO_OUT1_REG) & ~bitMask);
+                digitalWrite(pin, 0);
                 busyWaitCCount(shortCycles);
             } else {
                 // LOW bit
-                REG_WRITE(GPIO_OUT1_REG, REG_READ(GPIO_OUT1_REG) | bitMask);
+                digitalWrite(pin, 1);
                 busyWaitCCount(shortCycles);
-                REG_WRITE(GPIO_OUT1_REG, REG_READ(GPIO_OUT1_REG) & ~bitMask);
+                digitalWrite(pin, 0);
                 busyWaitCCount(longCycles);
             }
             i++;
@@ -234,31 +233,38 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     int sent = 0;
     while(sent < len) { 
         if (!wc.connected()) { 
-            Serial.printf("lost connection");
-            Serial.flush();
+            printf("lost connection");
             return false;
         }
         int pktLen = min(txSize, len - sent);
         r = wc.write((uint8_t *)(buf + sent), pktLen);
         if (r != pktLen) {
-            Serial.printf("write %d returned %d\n", count, r);
-            Serial.flush();
+            printf("write %d returned %d\n", count, r);
             return false;
         }
         sent += r;
         if (count++ % 100 == 0) { 
-            Serial.printf("."); 
-            Serial.flush();
+            printf("."); 
+            fflush(stdout);
         }
         neopixelWrite(ledPin, 0, 0, (count & 127) + 8);
         if (resetWdt) wdtReset();
         yield();
     }
-    Serial.printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
-    Serial.flush();
+    printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
+    fflush(stdout);
     neopixelWrite(ledPin, 0, 8, 0);
     return true;
 }
+
+struct Hist2 { 
+    static const int maxBucket = 256; // must be power of 2
+    int buckets[maxBucket];
+    inline void add(uint32_t x) { buckets[x & (maxBucket - 1)]++; }
+    Hist2() { bzero(buckets, sizeof(buckets)); }
+};
+
+Hist2 profilers[3];
 
 struct TimingHistogram { 
     static const int maxBucket = 300;
@@ -266,7 +272,7 @@ struct TimingHistogram {
     static int buckets[maxBucket][maxChannel];
 
     static const bool enable = true;
-    static const int histBufSz = 1024; // must be power of 2
+    static const int histBufSz = 4 * 1024; // must be power of 2
     int histWriteIdx = 0, histReadIdx = 0;
     uint32_t histBuf[histBufSz];
     inline void add(const uint32_t v, const int c) {
@@ -321,34 +327,23 @@ void IRAM_ATTR threadFunc(void *) {
         return;
     }
 
-    uint32_t startTsc = XTHAL_GET_CCOUNT();
     int maxBufsUsed = 0;
     neopixelWrite(ledPin, 0, 8, 0);
-
-#define DISABLE_CORE0_INT   // reduces jitter from ~44(49-94) to ~17(74-91) ticks, avoids occassional missed 2Mhz edges 
-#ifdef DISABLE_CORE0_INT
-    disableCore0WDT();
-    //disableLoopWDT();
-    portDISABLE_INTERRUPTS();
-    //uint32_t oldint;
-    //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
+    
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
-    _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
-#endif
+    if (opt.maskCore0Int) { 
+        //disableLoopWDT();
+        disableCore0WDT();
+        portDISABLE_INTERRUPTS();
+        _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
+        //uint32_t oldint;
+        //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
+    }
+    int cycleCount = 0;
+    int led; 
+    uint32_t startTsc = XTHAL_GET_CCOUNT();
     while(1) { 
-        while (elapsedSec > 1 && opt.histogram && hist.available()) { 
-            pair<uint32_t,int> p = hist.get();
-            int delta = p.first;
-            delta = min(hist.maxBucket - 1, delta);
-            int chan = p.second;
-            chan = min(hist.maxChannel - 1, chan);
-            hist.buckets[delta][chan]++;       
-        }
         if (psramLoopCount != *drLoopCount) {
-            if (psramLoopCount == 0) { 
-                Serial.printf("psramLoopCount\n");
-                Serial.flush();
-            }
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
             if (*drLoopCount - psramLoopCount >= dma_bufs - 2) { 
                 printf("esp_aync_memcpy buffer overrun psramLoopCount %d dramLoopCount %d\n", psramLoopCount, dramLoopCount);
@@ -364,28 +359,37 @@ void IRAM_ATTR threadFunc(void *) {
             psramLoopCount++; 
             if (pi >= (psram_sz - dma_sz * 2) / sizeof(uint32_t)) {
                 pi = 0;
-                //wdtReset();
                 if (!opt.histogram) 
                     break;
             }
-            
-#if 0
             if ((psramLoopCount & 127) == 1) {
                 int b = (psramLoopCount >> 4) & 127;
                 //rgbLedWriteBitBang(ledPin, b, b, 0);
                 //neopixelWrite(ledPin, b, b, 0);
             }
-#endif
             if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
         } else {
             //delay(1);
         }
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
-            if(++elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
+            if (0) { 
+                NEWneopixelWrite(ledPin, 0, 0, led++ & 0xff);
+                uint64_t totalEvents = 0;
+                for(int i = 0; i < profilers[0].maxBucket; i++)
+                    totalEvents += profilers[0].buckets[i];
+                printf("Total samples %lld implies %.2f sec sampling\n",
+                    totalEvents, 1.0 * totalEvents / 1.8 / 1000000);
+            }
+            //printf("sec %d\n", elapsedSec);
+            elapsedSec++;
+            if (elapsedSec == 10) { 
+                bzero(profilers[0].buckets, sizeof(profilers[0].buckets));
+            }
+            if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
             if(atariRam[1666] == 100 && atariRam[1667] == 99 && atariRam[1668] == 93) break;
-            if(cumulativeResets > 2) break;
-            if(currentResetValue == 0 && elapsedSec > 10) break;
+            //if(cumulativeResets > 2) break;
+            if(currentResetValue == 0 && elapsedSec > 15) break;
         }
     }
 
@@ -395,20 +399,23 @@ void IRAM_ATTR threadFunc(void *) {
     startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 24 * 1000000) {}
 
-#ifdef DISABLE_CORE0_INT
-    //_xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi; 
-    portENABLE_INTERRUPTS();
-    enableCore0WDT();
-    yield();
-    //enableLoopWDT();
-#endif
-    //while(1) { delay(10); }
-    Serial.printf("STOPPED. max dma bufs in use %d\n", maxBufsUsed);
-    Serial.flush();
+    if (opt.maskCore0Int) { 
+        portENABLE_INTERRUPTS();
+        _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi;
+        enableCore0WDT();
+    }
+
+    printf("STOPPED. max dma bufs in use %d\n", maxBufsUsed);
     uint32_t startUsec = micros();
     while(cbCount < psramLoopCount && micros() - startUsec < 1000000) {
         delay(50);
     }
+    uint64_t totalEvents = 0;
+    for(int i = 0; i < profilers[0].maxBucket; i++)
+        totalEvents += profilers[0].buckets[i];
+    printf("Total samples %lld implies %.2f sec sampling\n",
+        totalEvents, 1.0 * totalEvents / 1.8 / 1000000);
+
     neopixelWrite(ledPin, 8, 0, 0);
     printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x hri %d hwi %d minLoop %d maxLoop %d jit %d late %d\n", 
         millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc, hist.histReadIdx, hwi, minLoopE, 
@@ -434,34 +441,42 @@ void IRAM_ATTR threadFunc(void *) {
 
     if (opt.histogram) {
         vector<string> v; 
-        int first = hist.maxBucket, last = 0;
-        for (int c = 0; c < hist.maxChannel; c++) { 
-            for(int i = 1; i < hist.maxBucket; i++) { 
-                if (hist.buckets[i][c] > 0 && i > last) last = i;
+        int profCount = sizeof(profilers)/sizeof(profilers[0]);
+        int first = profilers[0].maxBucket, last = 0;
+        for (int c = 0; c < profCount; c++) { 
+            for(int i = 1; i < profilers[c].maxBucket; i++) { 
+                if (profilers[c].buckets[i] > 0 && i > last) last = i;
             }
-            for(int i = hist.maxBucket - 1; i > 0 ;i--) { 
-                if (hist.buckets[i][c] > 0 && i < first) first = i;
+            for(int i = profilers[c].maxBucket - 1; i > 0 ;i--) { 
+                if (profilers[c].buckets[i] > 0 && i < first) first = i;
             }
         }
         for(int i = first; i <= last; i++) {
             string s = sfmt("% 3d ", i);
-            for(int c = 0; c < hist.maxChannel; c++) {
-                s += sfmt("% 8d ", hist.buckets[i][c]);
+            for(int c = 0; c < profCount; c++) {
+                s += sfmt("% 8d ", profilers[c].buckets[i]);
             }
             s += " HIST";
             v.push_back(s);
         }
 
-        for (int c = 0; c < hist.maxChannel; c++) {
+        for (int c = 0; c < profCount; c++) {
             first = last = 0; 
-            for(int i = 1; i < hist.maxBucket; i++) { 
-                if (hist.buckets[i][c] > 0) last = i;
+            for(int i = 1; i < profilers[c].maxBucket; i++) { 
+                if (profilers[c].buckets[i] > 0) last = i;
             }
-            for(int i = hist.maxBucket - 1; i > 0 ;i--) { 
-                if (hist.buckets[i][c] > 0) first = i;
+            for(int i = profilers[c].maxBucket - 1; i > 0 ;i--) { 
+                if (profilers[c].buckets[i] > 0) first = i;
             }
             v.push_back(sfmt("channel %d: range %d-%d, jitter %d", c, first, last, last - first));
         }
+        uint64_t totalEvents = 0;
+        for(int i = 0; i < profilers[0].maxBucket; i++)
+            totalEvents += profilers[0].buckets[i];
+        v.push_back(sfmt("Total samples %lld implies %.2f sec sampling\n",
+                    totalEvents, 1.0 * totalEvents / 1.8 / 1000000));
+
+
         for(auto s : v) 
             printf("%s\n", s.c_str());
         printf("Writing to flash\n"); 
@@ -474,10 +489,10 @@ void IRAM_ATTR threadFunc(void *) {
         neopixelWrite(ledPin, 0, 0, 8);
     }
     
-    string s;
     printf("DUMP %.2f\n", millis() / 1000.0);
     
     if (opt.tcpSendPsram) { 
+        printf("TCP SEND %.2f\n", millis() / 1000.0);
         //j.begin();
         //wdtReset();
         yield();
@@ -507,12 +522,17 @@ void IRAM_ATTR threadFunc(void *) {
         }
         yield();
     }
-    Serial.printf("DONE %.2f\n", millis() / 1000.0);
-    Serial.flush();
+    printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
     
     //ESP.restart();
-    while(1) { yield(); };
+    printf("CORE0 idle\n");
+    while(1) { 
+        //printf("CORE0 idle\n");
+        delay(1000); 
+        yield();
+        neopixelWrite(ledPin, millis() % 20, 0, 0);
+    }
 }
 
 void setup() {
@@ -521,14 +541,25 @@ void setup() {
     digitalWrite(ledPin, 1);
     neopixelWrite(ledPin, 0, 10, 0);
     delay(500);
+    //Serial.begin(115200);
     printf("setup()\n");
+
+    while(0) { 
+        printf("setup()\n");
+        //rgbLedWriteBitBang_NO(ledPin, 0, 10, 0);
+        //neopixelWrite(ledPin, 0, 10, 0);
+        delay(500);
+        //neopixelWrite(ledPin, 10, 0, 0);
+        //rgbLedWriteBitBang_NO(ledPin, 10, 0, 0);
+        delay(500);
+    }
 
     if (1) { 
         SPIFFSVariableESP32Base::begin();
         SPIFFSVariable<vector<string>> hist("/histogram", {});
         vector<string> v = hist;
         for(auto s : v) { 
-            printf("%s\n", s.c_str());
+            printf("PREVIOUS %s\n", s.c_str());
         }
     }
     if (1) { 
@@ -821,28 +852,31 @@ void IRAM_ATTR iloop_pbi() {
     uint32_t lastResetLow = 0;
 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-    do {} while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0);                      // wait falling clock edge
+    while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {};                      // wait falling clock edge
+    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
 
     // works:70,80,90,100, 110 doesnt work
-    // works just reading right after the rising clock edge 
+    // works just reading right after the rising clock edge
     do {    
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         __asm__("nop"); // needs at least 1 nop between REG_WRITE/REG_READ(?) 
         uint32_t r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
-        if ((r0 & (refreshMask | casInh_Mask)) == (refreshMask | casInh_Mask)) {
+        if ((r0 & (casInh_Mask)) == (casInh_Mask)) {
             uint16_t addr = (r0 & addrMask) >> addrShift;
             uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
             
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data = *ramAddr;
                 //if (addr == 1016 && recentReset) data = 1;
+                if (stop) break;
                 while(tscFall - XTHAL_GET_CCOUNT() < 70) {}
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask);               //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
-                hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 1);
+                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                //hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 1); // 33 cycles
                 // timing 72-75 ticks to here
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             } else {
@@ -854,7 +888,8 @@ void IRAM_ATTR iloop_pbi() {
                 __asm__("nop");
                 uint16_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
                 *ramAddr = data;
-                hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 2);
+                profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                //hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 2);
             }
         } else {
 #if 1 
@@ -869,10 +904,12 @@ void IRAM_ATTR iloop_pbi() {
                 __asm__ __volatile__("nop");
             }
 #endif
-            if (stop) break;
-            hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 3);
+            profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+            //hist.add2(tscFall, 0, XTHAL_GET_CCOUNT(), 3);
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         }
+        profilers[0].add(tscFall - lastTscFall);  // currently 15 cycles 
+        lastTscFall = tscFall;
     } while(1);
 }
 
@@ -1015,11 +1052,11 @@ void loop() {
     //Serial.flush();
     //disableCore1WDT();
     //disableLoopWDT();
-    //portDISABLE_INTERRUPTS();
+    portDISABLE_INTERRUPTS();
     uint32_t oldint;
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi;  // saves 5 cycles, could save more 
-    __asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
+    //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
 
     maxElapsed1 = maxElapsed2 = maxElapsedIndex1 = -1;
     if (opt.bitResponse) {
@@ -1044,10 +1081,16 @@ void loop() {
     //while(1) {}
     //enableLoopWDT();
     portENABLE_INTERRUPTS();
+    _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi;  
     delay(200);
-    printf("avg loop1 %.2f ticks %.2f ns maxTicks %d at #%d   loop2 %.2f ticks %.2f ns maxTicks %d  diff %.2f\n", 
+    printf("CORE1: avg loop1 %.2f ticks %.2f ns maxTicks %d at #%d   loop2 %.2f ticks %.2f ns maxTicks %d  diff %.2f\n", 
         avgTicks1, avgNs1, maxElapsed1, maxElapsedIndex1, avgTicks2, avgNs2, maxElapsed2, avgNs2 - avgNs1); 
-    while(1) { yield(); delay(10); }
+    printf("CORE1 idle\n");
+    fflush(stdout);
+    while(1) { 
+        yield(); 
+        delay(1000); 
+    }
 }
 
 #ifdef CSIM
@@ -1094,7 +1137,8 @@ class SketchCsim : public Csim_Module {
 // D820 Init Vector LO
 // D821 Init vector hi
 
-//OS checks D808 for 0x4C and D80B for 0x91, then jumps to D819
+// OS sequentally sets each bit in NEWPORT, then 
+//OS checks D808 for 0x4C and D80B for 0x91, then jumps to D819 
 
 //RAM MAP
 // $8000-9FFF
