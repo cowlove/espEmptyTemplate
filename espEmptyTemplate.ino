@@ -55,21 +55,22 @@ static const struct {
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
    bool dumpSram      = 0;   ;
    bool timingTest    = 0;
-   bool logicAnalyzer = 0;
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
    bool dumpPsram     = 0;
-//#define PBI_DEVICE
+#define PBI_DEVICE
 #ifdef PBI_DEVICE
+   bool logicAnalyzer = 0;
    bool maskCore0Int  = 1;
    bool busAnalyzer   = 0;
    bool tcpSendPsram  = 0;
    bool histogram     = 1;
    bool pbiDevice     = 1;
 #else
+   bool logicAnalyzer = 1;
    bool pbiDevice     = 0;
    bool maskCore0Int  = 0;
-   bool busAnalyzer   = 1;
+   bool busAnalyzer   = 0;
    bool tcpSendPsram  = 1;
    bool histogram     = 0;
 #endif
@@ -206,7 +207,7 @@ volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
 static const int dma_sz = 4096 - 64;
-static const int dma_bufs = 8; // must be power of 2
+static const int dma_bufs = 16; // must be power of 2
 static const int dram_sz = dma_sz * dma_bufs;
 
 uint32_t *dram;
@@ -409,7 +410,7 @@ void IRAM_ATTR threadFunc(void *) {
         //cycleCount++;
         if (psramLoopCount != *drLoopCount) {
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
-            if (*drLoopCount - psramLoopCount >= dma_bufs - 2) { 
+            if (*drLoopCount - psramLoopCount >= dma_bufs - 6) { 
                 printf("esp_aync_memcpy buffer overrun psramLoopCount %d dramLoopCount %d\n", psramLoopCount, dramLoopCount);
                 break;
             }
@@ -495,11 +496,13 @@ void IRAM_ATTR threadFunc(void *) {
         millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc, minLoopE, 
         maxLoopE, maxLoopE - minLoopE, loopElapsedLate);
 
-    if (opt.dumpSram) {
+    if (opt.logicAnalyzer) {
         uint32_t last = 0;
-        printf("resetLowCycles: %d\n", resetLowCycles);
-        for(uint8_t *p = (uint8_t *)dram; p < (uint8_t *)(dram + dram_sz / sizeof(uint32_t)); p++) {
-            printf("DRAM %08x %08x   ", (int)(p - (uint8_t *)dram), *p);
+        for(uint8_t *p = (uint8_t *)psram; p < (uint8_t *)(psram + psram_sz / sizeof(uint32_t)); p++) {
+            printf("LA %08x %02x   ", (int)(p - (uint8_t *)dram), *p);
+            for(int i = 7; i >= 0; i--) 
+                printf("B%d=%d ", i, ((((*p) & (1 << i)) != 0) ? 1 : 0));
+            printf("    ");
             for(int i = 7; i >= 0; i--) 
                 printf("%c ", ((((*p) & (1 << i)) != 0) ? 'X' : '.'));
             printf("    ");
@@ -700,9 +703,9 @@ void setup() {
             printf("PU   %08x %08x %08x\n", *gpio0, *gpio1, PACK(*gpio0, *gpio1));
     }
 
-    vector<int> outputPins = {extSel_Pin, data0Pin};
+    //vector<int> outputPins = {extSel_Pin, data0Pin};
     if (1) { 
-        int bundleA_gpios[] = {clockPin, casInh_pin, readWritePin, addr0Pin + 0, addr0Pin + 1, data0Pin + 0, data0Pin + 1, data0Pin+3};
+        int bundleA_gpios[] = {clockPin, casInh_pin, extSel_Pin, mpdPin, addr0Pin + 0, addr0Pin + 1, data0Pin + 0, data0Pin + 1};
         dedic_gpio_bundle_config_t bundleA_config = {
             .gpio_array = bundleA_gpios,
             .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
@@ -783,24 +786,32 @@ void IRAM_ATTR iloop_logicAnalyzer() {
     
     const uint16_t triggerAddress       = 0xd1ff;
     const uint16_t triggerMask          = 0xffff;
-    //const uint16_t triggerMask          = 0x0;
     int triggerCount                    = 1;    // 0 for no trigger
     int captureDepth                    = 0;    // 0 for fill memory;
 
+#if 1 
     for(int i = 0; i < 1000; i++) { 
         //while((dedic_gpio_cpu_ll_read_in() & 0x1)) {}
         //while(!(dedic_gpio_cpu_ll_read_in() & 0x1)) {}
         while((*gpio0 & clockMask) != 0) {}; 
         while((*gpio0 & clockMask) == 0) {}; 
     }
+#endif
+
+    uint32_t lastTsc = XTHAL_GET_CCOUNT();
 
     while(triggerCount > 0) { 
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {} // wait falling edge 
         while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {} // wait rising edge 
-
+            __asm__("nop"); // 1 cycle
+            __asm__("nop"); // 1 cycle
+            __asm__("nop"); // 1 cycle
+            __asm__("nop"); // 1 cycle
+            __asm__("nop"); // 1 cycle
+    
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         if ((r0 & refreshMask) == 0)
-            continue;
+           continue;
 
         uint16_t addr = (r0 & addrMask) >> addrShift; 
 
