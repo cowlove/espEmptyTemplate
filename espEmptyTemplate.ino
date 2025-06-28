@@ -65,7 +65,9 @@ static const struct {
    bool busAnalyzer   = 0;
    bool tcpSendPsram  = 0;
    bool histogram     = 1;
+   bool pbiDevice     = 1;
 #else
+   bool pbiDevice     = 0;
    bool maskCore0Int  = 0;
    bool busAnalyzer   = 1;
    bool tcpSendPsram  = 1;
@@ -459,8 +461,10 @@ void IRAM_ATTR threadFunc(void *) {
                 for(int b = 0; b < 16 * 1024 / bankSize; b++)
                 banks[(0x8000 >> bankShift) + b] = &cartROM[b * bankSize]; 
             }
+#ifdef HAVE_RESET_PIN
             //if(cumulativeResets > 2) break;
             if(currentResetValue == 0 && elapsedSec > 15) break;
+#endif
         }
     }
 
@@ -601,6 +605,7 @@ void IRAM_ATTR threadFunc(void *) {
     if (banks[0xd800 >> bankShift] == pbiROM) {
         printf("bank 0xd8 set to PBI ROM\n");
     }
+    printf("atariRam[754] = %d\n", atariRam[754]);
     
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
@@ -746,16 +751,16 @@ void setup() {
         pinMode(refreshPin, INPUT_PULLUP);
         pinMode(casInh_pin, INPUT_PULLUP);
         pinMode(extSel_Pin, INPUT_PULLUP);
-
     }
     //pinMode(ledPin, OUTPUT);
     //digitalWrite(ledPin, 1);
 
-    pinMode(extSel_Pin, OUTPUT);
-    digitalWrite(extSel_Pin, 1);
-    pinMode(mpdPin, OUTPUT);
-    digitalWrite(mpdPin, 1);
-
+    if (opt.pbiDevice) { 
+        pinMode(extSel_Pin, OUTPUT);
+        digitalWrite(extSel_Pin, 1);
+        pinMode(mpdPin, OUTPUT);
+        digitalWrite(mpdPin, 1);
+    }
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
         uint32_t r1 = *gpio1;
@@ -830,8 +835,11 @@ void IRAM_ATTR iloop_busMonitor() {
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
     minLoopElapsed = 0xffff;
     maxLoopElapsed = 0;
-    uint16_t triggerAddress = 0xd1ff;
-    int trigger = false;
+    const uint16_t triggerAddress       = 0xd1ff;
+    //const uint16_t triggerMask          = 0xffff;
+    const uint16_t triggerMask          = 0x0;
+    int triggerCount                    = 1;    // 0 for no trigger
+    int captureDepth                    = 0;    // 0 for fill memory;
     while(!stop) {
         //uint32_t *nextOut = dram + dma_sz * ((dramLoopCount + 1) & (dma_bufs - 1)) / sizeof(uint32_t);
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {} // wait falling edge 
@@ -851,9 +859,10 @@ void IRAM_ATTR iloop_busMonitor() {
             continue;
         uint16_t addr = (r0 & addrMask) >> addrShift; 
 
-        if (trigger == false) { 
-            if (addr != triggerAddress) continue;
-            trigger = true;
+        if (triggerCount > 0) {
+            if ((addr & triggerMask) != (triggerAddress & triggerMask)) continue;
+            triggerCount--;
+            if (triggerCount > 0) continue;
         }
 
 #ifdef HAVE_RESET_PIN

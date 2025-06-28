@@ -1,3 +1,16 @@
+Actively drive extEnt and MPD rather than just disabling outputs.  Passes 1 min test. 
+Not sure if MPD works yet, basic seems to hang with poke d1ff,1, possibly basic need mathpack
+But doesn't hang in bootup as it should when os tries to access pbi init in pbiROM
+timings:
+channel 0: range 126-142, jitter 16
+channel 1: range 79-83, jitter 4
+channel 2: range 99-105, jitter 6
+channel 3: range 0-0, jitter 0
+Total samples 91274819 implies 50.71 sec sampling
+
+
+
+
 Stripped out read tsc wait loop, trying earlier read timings 
 channel 0: range 126-142, jitter 16
 channel 1: range 64-69, jitter 5
