@@ -43,28 +43,35 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-#if 1
-   bool fakeClock     = 0;
-   float histRunSec   = -120;
-#else 
+#define FAKE_CLOCK
+#ifdef FAKE_CLOCK
    bool fakeClock     = 1;
    float histRunSec   = 30;
+#else 
+   bool fakeClock     = 0;
+   float histRunSec   = -120;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
-   bool tcpSendPsram  = 0;
-   bool dumpPsram     = 0;
    bool dumpSram      = 0;   ;
-   bool histogram     = 1;
    bool timingTest    = 0;
    bool logicAnalyzer = 0;
-   bool busAnalyzer   = 0;
    bool bitResponse   = 0;
+   bool core0Led      = 0;
+   bool dumpPsram     = 0;
+#define PBI_DEVICE
+#ifdef PBI_DEVICE
    bool maskCore0Int  = 1;
+   bool busAnalyzer   = 0;
+   bool tcpSendPsram  = 0;
+   bool histogram     = 1;
+#else
+   bool maskCore0Int  = 0;
+   bool busAnalyzer   = 1;
+   bool tcpSendPsram  = 1;
+   bool histogram     = 0;
+#endif
 } opt;
-
-// *** CHANGES NOT YET REFLECTED IN HARDWARE:  Move reset input from pin 48 to 47, ext_sel from pin 47 to 46, 
-// wire refresh to pin 21 
 
 struct Pin {
     int gpionum;
@@ -104,7 +111,15 @@ static const uint32_t copyResetMask = 0x40000000;
 static const uint32_t copyDataShift = 22;
 static const uint32_t copyDataMask = 0xff << copyDataShift;
 
-uint8_t atariRam[64 * 1024] = {0x0};
+static const int nrBanks = 4;
+static const int bankShift = 14;
+static const uint16_t bankMask = 0xc000;
+DRAM_ATTR uint8_t *banks[nrBanks];
+DRAM_ATTR uint8_t atariRam[64 * 1024] = {0x0};
+DRAM_ATTR uint8_t cartROM[] = {
+#include "./joust.h"
+};
+
 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
@@ -141,7 +156,7 @@ volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
 static const int dma_sz = 4096 - 64;
-static const int dma_bufs = 4; // must be power of 2
+static const int dma_bufs = 8; // must be power of 2
 static const int dram_sz = dma_sz * dma_bufs;
 
 uint32_t *dram;
@@ -169,7 +184,6 @@ int maxElapsed1 = 0, maxElapsed2 = 0;
 int maxElapsedIndex1 = 0;
 void iloop_timings1();
 void iloop_timings2();
-
 
 
 int maxLoopElapsed, minLoopElapsed, loopElapsedLate = 0;
@@ -221,7 +235,7 @@ void NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t b
 }
 #pragma GCC pop_options
 
-// socat TCP-LISTEN:9999 - > file.bin
+//  socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
     //neopixelWrite(ledPin, 0, 0, 8);
     //char *host = "10.250.250.240";
@@ -233,7 +247,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     WiFiClient wc;
     static const int txSize = 1024;
    
-    //neopixelWrite(ledPin, 8, 0, 8);
+    neopixelWrite(ledPin, 8, 0, 8);
     int r = wc.connect(host, 9999);
     printf("connect() returned %d\n", r);
     uint32_t startMs = millis();
@@ -255,13 +269,13 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
             printf("."); 
             fflush(stdout);
         }
-        //neopixelWrite(ledPin, 0, 0, (count & 127) + 8);
+        neopixelWrite(ledPin, 0, 0, (count & 127) + 8);
         if (resetWdt) wdtReset();
         yield();
     }
     printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
     fflush(stdout);
-    //neopixelWrite(ledPin, 0, 8, 0);
+    neopixelWrite(ledPin, 0, 8, 0);
     return true;
 }
 
@@ -359,8 +373,7 @@ void IRAM_ATTR threadFunc(void *) {
             psramLoopCount++; 
             if (pi >= (psram_sz - dma_sz * 2) / sizeof(uint32_t)) {
                 pi = 0;
-                if (!opt.histogram) 
-                    break;
+                break;
             }
             if ((psramLoopCount & 127) == 1) {
                 int b = (psramLoopCount >> 4) & 127;
@@ -368,13 +381,11 @@ void IRAM_ATTR threadFunc(void *) {
                 //neopixelWrite(ledPin, b, b, 0);
             }
             if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
-        } else {
-            //delay(1);
-        }
+        } 
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
-            if (1) { 
+            if (opt.core0Led) { 
                 if (elapsedSec & 1) {
                     int cycles = (volatile int)ramReads;
                     if (cycles - lastCycleCount > 1700000) {
@@ -391,7 +402,9 @@ void IRAM_ATTR threadFunc(void *) {
                 for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
-            if(atariRam[1666] == 100 && atariRam[1667] == 99 && atariRam[1668] == 93) break;
+            if(atariRam[1666] == 100 && atariRam[1667] == 99 && atariRam[1668] == 93) {
+                banks[2] = cartROM;
+            }
             //if(cumulativeResets > 2) break;
             if(currentResetValue == 0 && elapsedSec > 15) break;
         }
@@ -541,7 +554,7 @@ void setup() {
     delay(500);
     Serial.begin(115200);
     printf("setup()\n");
-    if (1) { 
+    if (0) { 
         pinMode(ledPin, OUTPUT);
         digitalWrite(ledPin, 0);
         int color = 0;
@@ -553,7 +566,7 @@ void setup() {
         }
     }
 
-    if (1) { 
+    if (opt.histogram) { 
         SPIFFSVariableESP32Base::begin();
         SPIFFSVariable<vector<string>> hist("/histogram", {});
         vector<string> v = hist;
@@ -672,7 +685,7 @@ void setup() {
     //digitalWrite(ledPin, 1);
 
     pinMode(extSel_Pin, OUTPUT);
-    digitalWrite(extSel_Pin, 0);
+    digitalWrite(extSel_Pin, 1);
 
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
@@ -746,6 +759,8 @@ void IRAM_ATTR iloop_busMonitor() {
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
     minLoopElapsed = 0xffff;
     maxLoopElapsed = 0;
+    uint16_t triggerAddress = 0xd1ff;
+    int trigger = false;
     while(!stop) {
         //uint32_t *nextOut = dram + dma_sz * ((dramLoopCount + 1) & (dma_bufs - 1)) / sizeof(uint32_t);
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {} // wait falling edge 
@@ -761,6 +776,11 @@ void IRAM_ATTR iloop_busMonitor() {
             continue;
 
         uint16_t addr = (r0 & addrMask) >> addrShift; 
+
+        if (trigger == false) { 
+            if (addr != triggerAddress) continue;
+            trigger = true;
+        }
 
         if ((r1 & resetMask) != 0) {
             r0 |= copyResetMask;
@@ -837,10 +857,6 @@ void IRAM_ATTR iloop_bitResponse() {
 // TODO need to eventually manage the MPD output bit 
     
 void IRAM_ATTR iloop_pbi() {	
-    static const int nrBanks = 4;
-    static const int bankShift = 14;
-    static const uint16_t bankMask = 0xc000;
-    static uint8_t *banks[nrBanks];
 
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
@@ -903,8 +919,8 @@ void IRAM_ATTR iloop_pbi() {
                 cumulativeResets++;
                 __asm__ __volatile__("nop");
             }
-            ramReads++; // had to tuck fake ramReads++ here, no time in read loop.  Had to exclude profiler                
-            //profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+            //ramReads++; // had to tuck fake ramReads++ here, no time in read loop.  Had to exclude profiler                
+            profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // profile currently 15 cycles 
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         }
         profilers[0].add(tscFall - lastTscFall);  // currently 15 cycles 
@@ -1141,7 +1157,7 @@ class SketchCsim : public Csim_Module {
 
 // OS sequentally sets each bit in NEWPORT, then 
 //OS checks D808 for 0x4C and D80B for 0x91, then jumps to D819 
-
+// Actual bus trace shows it seems to read D803 checking for == 80
 //RAM MAP
 // $8000-9FFF
 // $A000-BFFF
