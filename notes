@@ -1,3 +1,11 @@
+Before starting PBI logic work: no led
+PREVIOUS channel 0: range 125-145, jitter 20
+PREVIOUS channel 1: range 58-79, jitter 21
+PREVIOUS channel 2: range 95-115, jitter 20
+PREVIOUS channel 3: range 0-0, jitter 0
+PREVIOUS Total samples 37805910 implies 21.00 sec sampling
+
+
 PREVIOUS channel 0: range 151-165, jitter 14
 PREVIOUS channel 1: range 63-68, jitter 5
 PREVIOUS channel 2: range 104-118, jitter 14

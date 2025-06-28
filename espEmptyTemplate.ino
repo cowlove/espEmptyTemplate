@@ -43,13 +43,13 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-#define FAKE_CLOCK
+//#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1;
    float histRunSec   = 30;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = -120;
+   float histRunSec   = 60;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -857,11 +857,10 @@ void IRAM_ATTR iloop_bitResponse() {
 // TODO need to eventually manage the MPD output bit 
     
 void IRAM_ATTR iloop_pbi() {	
-
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
     };
-
+    uint8_t dummyStore;
     uint32_t tscStart = XTHAL_GET_CCOUNT();
 
     bool recentReset = false;
@@ -871,7 +870,7 @@ void IRAM_ATTR iloop_pbi() {
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {};                      // wait falling clock edge
     uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-
+    uint32_t mpdMask = 0; // todo keep mpdMask precomputed
     // works:70,80,90,100, 110 doesnt work
     // works just reading right after the rising clock edge
     do {    
@@ -881,33 +880,38 @@ void IRAM_ATTR iloop_pbi() {
         __asm__("nop"); // needs at least 1 nop between REG_WRITE/REG_READ(?) 
         uint32_t r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);          
-        if ((r0 & (casInh_Mask)) == (casInh_Mask)) {
-            uint16_t addr = (r0 & addrMask) >> addrShift;
-            uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
-            
+
+        uint16_t addr = (r0 & addrMask) >> addrShift;
+        uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
+        //if ((r0 & (casInh_Mask)) != 0) {
             if ((r0 & readWriteMask) != 0) {                                            // 1. READ        
                 uint8_t data = *ramAddr;
-                //if (addr == 1016 && recentReset) data = 1;
                 //while(tscFall - XTHAL_GET_CCOUNT() < 70) {}
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask); //    enable DATA lines for output
-                //REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
-                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));            //    output data to data bus
-                // timing requirement: 70-80 ticks to here
-                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                if ((r0 & (casInh_Mask)) != 0) {
+                    REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask); //    enable DATA lines for output
+                    //REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
+                    REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));            //    output data to data bus
+                    // timing requirement: 70-80 ticks to here
+                   profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                }
+                if (stop) break;
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             
             } else {
+                if ((r0 & (casInh_Mask)) == 0) 
+                    ramAddr = &dummyStore;
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  // 2. WRITE
-                if (stop) break;
                 __asm__("nop");
                 __asm__("nop");
                 __asm__("nop");
                 __asm__("nop");
                 uint16_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
                 *ramAddr = data;
+                if (addr == 0xd1ff) mpdMask = (data = 0x1) ? 0x10000000 : 0; // don't think this will fit
                 profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
                 //ramWrites++;
             }
+#if 0
         } else {
             uint32_t r1 = REG_READ(GPIO_IN1_REG);
             currentResetValue = (r1 & resetMask) != 0;
@@ -923,6 +927,7 @@ void IRAM_ATTR iloop_pbi() {
             profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // profile currently 15 cycles 
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         }
+#endif
         profilers[0].add(tscFall - lastTscFall);  // currently 15 cycles 
         lastTscFall = tscFall;
     } while(1);
