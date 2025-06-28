@@ -1,3 +1,12 @@
+First attempt at PBI logic, works, but does not hang in PBI init loop like it should
+channel 0: range 1-254, jitter 253
+channel 1: range 68-73, jitter 5
+channel 2: range 89-124, jitter 35
+channel 3: range 0-0, jitter 0
+Total samples 48666588 implies 27.04 sec sampling
+
+
+
 Before starting PBI logic work: no led
 PREVIOUS channel 0: range 125-145, jitter 20
 PREVIOUS channel 1: range 58-79, jitter 21

@@ -49,7 +49,7 @@ static const struct {
    float histRunSec   = 30;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 60;
+   float histRunSec   = 600;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -97,9 +97,13 @@ static const int      readWritePin = 18;
 static const int      readWriteMask = (1 << readWritePin); 
 
 //GPIO1 pins
+#ifdef HAVE_RESET_PIN
 static const int      resetPin = 46;
 static const int      resetMask = 1 << (resetPin - 32); 
-static const int      extSel_Pin = 47;
+#endif
+static const int      mpdPin = 46;  // active low
+static const int      mpdMask = 1 << (mpdPin - 32); 
+static const int      extSel_Pin = 47; // active high 
 static const int      extSel_PortPin = extSel_Pin - 32 /* port1 pin*/;
 static const int      extSel_Mask = (1 << extSel_PortPin);
 static const int      data0Pin = 38;
@@ -107,19 +111,59 @@ static const int      data0PortPin = data0Pin - 32;
 static const int      dataShift = data0PortPin;
 static const int      dataMask = (0xff << dataShift);
 
+#ifdef HAVE_RESET_PIN
 static const uint32_t copyResetMask = 0x40000000;
+#endif
+static const uint32_t copyMpdMask = 0x40000000;
 static const uint32_t copyDataShift = 22;
 static const uint32_t copyDataMask = 0xff << copyDataShift;
 
-static const int nrBanks = 4;
-static const int bankShift = 14;
-static const uint16_t bankMask = 0xc000;
+static const int bankBits = 5;
+static const int nrBanks = 1 << bankBits;
+static const int bankSize = 64 * 1024 / nrBanks;
+static const uint16_t bankMask = 0xffff0000 >> bankBits;
+static const int bankShift = 16 - bankBits;
+
 DRAM_ATTR uint8_t *banks[nrBanks];
 DRAM_ATTR uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR uint8_t cartROM[] = {
 #include "./joust.h"
 };
-DRAM_ATTR uint8_t pbiROM[2 * 1024] = {0};
+DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
+    0x0f,                     // D800 ROM cksum lo
+    0x0f,                     // D801 ROM cksum hi
+    0x01,                     // D802 ROM version
+    0x80,                     // D803 ID num
+    0x01,                     // D804 Device Type
+    0x4c,                     // 5
+    0x00,                     // 6
+    0x00,                     // 7   
+    0x4c,                     // D808 JMP (0x4C)
+    0x00,                     // D809 ISR vect LO
+    0xd8,                     // D80A ISR vect HI
+    0x91,                     // D80B ID num 2 (0x91)
+    0x65,                     // D80C Device Name (ASCII)
+    0x00,                        // D
+    0x00,                        // E
+    0x00,                        // F
+    0x00,                         // 0
+    0x00,                         // 1
+    0x00,                         // 2
+    0x00,                          // 3
+    0x00,                          // 4
+    0x00,                          // 5
+    0x00,                          // 6
+    0x00,                          // 7
+    0x00,                          // 8
+    //0x60,                      // D819 RTS
+    0x4c,                           // D819 JMP ($4C)
+    0x1c,                      // D81A Init Vector LO
+    0xd8,                      // D81B Init vector hi
+    
+    // D81C INIT routine 
+    //0x60,                        // RTS 
+    0x38, 0xea, 0xea, 0xea, 0xea, 0xb0, 0xfe // sec, nop,nop, nop, bcs -2 
+};
 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
@@ -402,8 +446,11 @@ void IRAM_ATTR threadFunc(void *) {
                 for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
+
+            // map in cartridge 
             if(atariRam[1666] == 100 && atariRam[1667] == 99 && atariRam[1668] == 93) {
-                banks[2] = cartROM;
+                for(int b = 0; b < 16 * 1024 / bankSize; b++)
+                banks[(0x8000 >> bankShift) + b] = &cartROM[b * bankSize]; 
             }
             //if(cumulativeResets > 2) break;
             if(currentResetValue == 0 && elapsedSec > 15) break;
@@ -483,6 +530,7 @@ void IRAM_ATTR threadFunc(void *) {
             for(int i = profilers[c].maxBucket - 1; i > 0 ;i--) { 
                 if (profilers[c].buckets[i] > 0) first = i;
             }
+            yield();
             v.push_back(sfmt("channel %d: range %d-%d, jitter %d", c, first, last, last - first));
         }
         uint64_t totalEvents = 0;
@@ -493,11 +541,14 @@ void IRAM_ATTR threadFunc(void *) {
 
         for(auto s : v) 
             printf("%s\n", s.c_str());
-        printf("Writing to flash\n"); 
+        printf("Writing to flash\n");
+        yield(); 
         LittleFS.remove("/histogram");
+        yield();
         printf("LittleFS.remove() finished\n"); 
         SPIFFSVariable<vector<string>> h("/histogram", {});
         printf("SPIFFS var finished\n"); 
+        yield();
         h = v;
         printf("Done writing to flash\n"); 
         //neopixelWrite(ledPin, 0, 0, 8);
@@ -522,10 +573,10 @@ void IRAM_ATTR threadFunc(void *) {
             //s += sfmt("%08x\n", *p);
             if (1) { 
                 //if ((*p & copyResetMask) != 0)
-                printf("P%08x %08x %04x %02x RST%d C%d RW%d\n", 
+                printf("P%08x %08x %04x %02x MPD%d C%d RW%d\n", 
                     (int)(p - psram), *p, (*p & addrMask) >> addrShift,
                     (*p & copyDataMask) >> copyDataShift, 
-                    (*p& copyResetMask) != 0, 
+                    (*p& copyMpdMask) != 0, 
                     (*p & casInh_Mask) != 0,
                     (*p & readWriteMask) != 0);
                 //printf("P %08X %08X\n", p - psram, *p);
@@ -599,7 +650,8 @@ void setup() {
     uint32_t maskl = (uint32_t)mask;
     uint32_t maskh = (uint32_t)((mask & 0xffffffff00000000LL) >> 32);
     printf("MASK %d %08x %08x %08x\n", (int)pins.size(), maskl, maskh, PACK(maskl, maskh));
-
+    printf("%d banks, bankShift %d, bankMask %04x\n", (int)nrBanks, bankShift, bankMask);
+    
     bzero(psram, psram_sz);
     bzero(dram, dram_sz);
     if (opt.testPins) {  
@@ -675,7 +727,7 @@ void setup() {
         pinMode(readWritePin, INPUT_PULLUP);
 #endif
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
-        pinMode(resetPin, INPUT_PULLUP);
+        pinMode(mpdPin, INPUT_PULLDOWN);
         pinMode(refreshPin, INPUT_PULLUP);
         pinMode(casInh_pin, INPUT_PULLUP);
         pinMode(extSel_Pin, INPUT_PULLUP);
@@ -686,6 +738,8 @@ void setup() {
 
     pinMode(extSel_Pin, OUTPUT);
     digitalWrite(extSel_Pin, 1);
+    pinMode(mpdPin, OUTPUT);
+    digitalWrite(mpdPin, 1);
 
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
@@ -714,7 +768,9 @@ void IRAM_ATTR iloop_logicAnalyzer() {
         while((*gpio0 & clockMask) == 0) {}; 
     }
     uint32_t tsc = XTHAL_GET_CCOUNT();
+#ifdef HAVE_RESET_PIN
     while((*gpio1 & resetMask) == 0) {}; 
+#endif
     resetLowCycles = XTHAL_GET_CCOUNT()- tsc;
     while(!stop) {
         *out = dedic_gpio_cpu_ll_read_in();
@@ -772,9 +828,12 @@ void IRAM_ATTR iloop_busMonitor() {
         r0 = REG_READ(GPIO_IN_REG);
         r1 = REG_READ(GPIO_IN1_REG);
  
-        if ((r1 & resetMask) == 0 || (r0 & refreshMask) == 0)
+#ifdef HAVE_RESET_PIN
+        if ((r1 & resetMask) == 0)
             continue;
-
+#endif
+        if ((r0 & refreshMask) == 0)
+            continue;
         uint16_t addr = (r0 & addrMask) >> addrShift; 
 
         if (trigger == false) { 
@@ -782,11 +841,13 @@ void IRAM_ATTR iloop_busMonitor() {
             trigger = true;
         }
 
+#ifdef HAVE_RESET_PIN
         if ((r1 & resetMask) != 0) {
             r0 |= copyResetMask;
         } else {
             r0 &= ~copyResetMask;
         }
+#endif
         r0 &= ~copyDataMask;
         r0 |= (r1 & dataMask) >> dataShift << copyDataShift;
         if (opt.histogram) { 
@@ -870,16 +931,15 @@ void IRAM_ATTR iloop_pbi() {
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {};                      // wait falling clock edge
     uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-    uint32_t mpdMask = 0; // todo keep mpdMask precomputed
-    // works:70,80,90,100, 110 doesnt work
-    // works just reading right after the rising clock edge
+    uint32_t currentMpdMask = extSel_Mask | mpdMask; // todo use to keep mpdMask precomputed
+
     do {    
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);                             // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask | mpdMask);     // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         __asm__("nop"); // needs at least 1 nop between REG_WRITE/REG_READ(?) 
         uint32_t r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
-        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);          
+        REG_WRITE(GPIO_OUT1_REG, 0); // clear data lines and extSel, pre-set MPD active low          
 
         uint16_t addr = (r0 & addrMask) >> addrShift;
         uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
@@ -888,19 +948,22 @@ void IRAM_ATTR iloop_pbi() {
                 uint8_t data = *ramAddr;
                 //while(tscFall - XTHAL_GET_CCOUNT() < 70) {}
                 if ((r0 & (casInh_Mask)) != 0) {
-                    REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask); //    enable DATA lines for output
+                    REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask | mpdMask); //    enable DATA lines for output
                     //REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
-                    REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | mpdMask);            //    output data to data bus
+                    REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | currentMpdMask);            //    output data to data bus
                     // timing requirement: 70-80 ticks to here
-                   profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                    profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                } else {
+                    // few cycles available here to do misc work 
                 }
                 if (stop) break;
                 while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
             
-            } else {
+            } else {                                                                   // 2. WRITE  TODO - we dont do extsel/mpd here yet
+                //TODO: if ((r0 & casInh_Mask)  != 0) REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask);                       //    enable DATA lines for output
                 if ((r0 & (casInh_Mask)) == 0) 
                     ramAddr = &dummyStore;
-                while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  // 2. WRITE
+                while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  
                 __asm__("nop");
                 __asm__("nop");
                 __asm__("nop");
@@ -909,11 +972,11 @@ void IRAM_ATTR iloop_pbi() {
                 *ramAddr = data;
                 if (addr == 0xd1ff) {
                     if (data == 0x1) {
-                        mpdMask = 0; // TODO 0x10000000;
-                        banks[4] = &pbiROM[0];
+                        currentMpdMask = extSel_Mask; // set mpdMask active low 
+                        banks[0xd800 >> bankShift] = &pbiROM[0]; 
                     } else { 
-                        mpdMask = 0;
-                        banks[4] = &atariRam[0];
+                        currentMpdMask = extSel_Mask | mpdMask; // mpdMask inactive high 
+                        banks[0xd800 >> bankShift] = &atariRam[0xd800];
                     }
                 }
                 profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
