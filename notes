@@ -1,3 +1,95 @@
+Stripped out read tsc wait loop, trying earlier read timings 
+channel 0: range 126-142, jitter 16
+channel 1: range 64-69, jitter 5
+channel 2: range 91-106, jitter 15
+channel 3: range 0-0, jitter 0
+Total samples 91274764 implies 50.71 sec sampling
+
+
+
+
+Before attempting -00 and -01:
+channel 0: range 109-162, jitter 53
+channel 1: range 72-77, jitter 5
+channel 2: range 91-131, jitter 40
+channel 3: range 0-0, jitter 0
+Total samples 91274826 implies 50.71 sec sampling
+
+
+-01:
+channel 0: range 119-153, jitter 34
+channel 1: range 70-75, jitter 5
+channel 2: range 94-125, jitter 31
+channel 3: range 0-0, jitter 0
+Total samples 59060198 implies 32.81 sec sampling
+
+-00 doesnt work, misses lots of clocks
+hannel 0: range 1-255, jitter 254
+channel 1: range 67-85, jitter 18
+channel 2: range 93-106, jitter 13
+channel 3: range 0-0, jitter 0
+Total samples 80312675 implies 44.62 sec sampling
+
+Found bug in code, stopped investigating -O0 
+
+
+
+timings peeking/poking d11f from basic:
+
+channel 0: range 111-158, jitter 47
+channel 1: range 70-77, jitter 7
+channel 2: range 91-127, jitter 36
+channel 3: range 0-0, jitter 0
+
+89        0        0        0        0  HIST
+ 90        0        0        0        0  HIST
+ 91        0        0   318858        0  HIST
+ 92        0        0  2078468        0  HIST
+ 93        0        0  3172612        0  HIST
+ 94        0        0  6473902        0  HIST
+ 95        0        0  2077785        0  HIST
+ 96        0        0  7220215        0  HIST
+ 97        0        0  5198034        0  HIST
+ 98        0        0  6688274        0  HIST
+ 99        0        0  7919447        0  HIST
+ 100        0        0  6882623        0  HIST
+ 101        0        0  5410335        0  HIST
+ 102        0        0  1198364        0  HIST
+ 103        0        0  1417346        0  HIST
+ 104        0        0   394448        0  HIST
+ 105        0        0       28        0  HIST
+ 106        0        0        0        0  HIST
+ 107        0        0        0        0  HIST
+ 108        0        0        0        0  HIST
+ 109        0        0        0        0  HIST
+ 110        0        0        0        0  HIST
+ 111      106        0        0        0  HIST
+ 112     1353        0        0        0  HIST
+ 113     3789        0        0        0  HIST
+ 114      431        0     1018        0  HIST
+ 115     1447        0      889        0  HIST
+ 116      357        0      631        0  HIST
+ 117     1831        0        0        0  HIST
+ 118       18        0      963        0  HIST
+ 119     1455        0     3368        0  HIST
+ 120        0        0      700        0  HIST
+ 121     1547        0     1639        0  HIST
+ 122       11        0     1493        0  HIST
+ 123     2376        0     2479        0  HIST
+ 124      181        0     1396        0  HIST
+ 125        0        0      220        0  HIST
+ 126    11722        0      103        0  HIST
+ 127  2665289        0        3        0  HIST
+ 128  14717272        0        0        0  HIST
+ 129  39516867        0        0        0  HIST
+ 130 
+
+
+
+
+                        banks[0xd800 >> bankShift] = &atariRam[0xd800];
+
+
 First attempt at PBI logic, works, but does not hang in PBI init loop like it should
 channel 0: range 1-254, jitter 253
 channel 1: range 68-73, jitter 5
