@@ -59,7 +59,7 @@ static const struct {
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
    bool dumpPsram     = 0;
-#define PBI_DEVICE
+//#define PBI_DEVICE
 #ifdef PBI_DEVICE
    bool maskCore0Int  = 1;
    bool busAnalyzer   = 0;
@@ -781,17 +781,37 @@ void IRAM_ATTR iloop_logicAnalyzer() {
     register uint8_t *out = (uint8_t *)dram;
     register uint8_t *dram_end = out + dma_sz;
     
+    const uint16_t triggerAddress       = 0xd1ff;
+    const uint16_t triggerMask          = 0xffff;
+    //const uint16_t triggerMask          = 0x0;
+    int triggerCount                    = 1;    // 0 for no trigger
+    int captureDepth                    = 0;    // 0 for fill memory;
+
     for(int i = 0; i < 1000; i++) { 
         //while((dedic_gpio_cpu_ll_read_in() & 0x1)) {}
         //while(!(dedic_gpio_cpu_ll_read_in() & 0x1)) {}
         while((*gpio0 & clockMask) != 0) {}; 
         while((*gpio0 & clockMask) == 0) {}; 
     }
-    uint32_t tsc = XTHAL_GET_CCOUNT();
-#ifdef HAVE_RESET_PIN
-    while((*gpio1 & resetMask) == 0) {}; 
-#endif
-    resetLowCycles = XTHAL_GET_CCOUNT()- tsc;
+
+    while(triggerCount > 0) { 
+        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {} // wait falling edge 
+        while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {} // wait rising edge 
+
+        uint32_t r0 = REG_READ(GPIO_IN_REG);
+        if ((r0 & refreshMask) == 0)
+            continue;
+
+        uint16_t addr = (r0 & addrMask) >> addrShift; 
+
+        if (triggerCount > 0) {
+            if ((addr & triggerMask) != (triggerAddress & triggerMask)) continue;
+            triggerCount--;
+            if (triggerCount > 0) continue;
+        }
+
+    }
+
     while(!stop) {
         *out = dedic_gpio_cpu_ll_read_in();
         #if 1
@@ -808,8 +828,7 @@ void IRAM_ATTR iloop_logicAnalyzer() {
             __asm__ __volatile__("nop"); // 1 cycle
             __asm__ __volatile__("nop"); // 1 cycle
             __asm__ __volatile__("nop"); // 1 cycle
-            out += 4;
-            
+            out += 4;            
             *(out - 1 ) = dedic_gpio_cpu_ll_read_in();
             __asm__ __volatile__("nop"); // 1 cycle
             __asm__ __volatile__("nop"); // 1 cycle
@@ -836,8 +855,8 @@ void IRAM_ATTR iloop_busMonitor() {
     minLoopElapsed = 0xffff;
     maxLoopElapsed = 0;
     const uint16_t triggerAddress       = 0xd1ff;
-    //const uint16_t triggerMask          = 0xffff;
-    const uint16_t triggerMask          = 0x0;
+    const uint16_t triggerMask          = 0xffff;
+    //const uint16_t triggerMask          = 0x0;
     int triggerCount                    = 1;    // 0 for no trigger
     int captureDepth                    = 0;    // 0 for fill memory;
     while(!stop) {
@@ -872,6 +891,13 @@ void IRAM_ATTR iloop_busMonitor() {
             r0 &= ~copyResetMask;
         }
 #endif
+        if ((r1 & mpdMask) != 0) {
+            r0 |= copyMpdMask;
+        } else {
+            r0 &= ~copyMpdMask;
+        }
+
+
         r0 &= ~copyDataMask;
         r0 |= (r1 & dataMask) >> dataShift << copyDataShift;
         if (opt.histogram) { 
