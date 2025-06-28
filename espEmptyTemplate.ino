@@ -119,7 +119,7 @@ DRAM_ATTR uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR uint8_t cartROM[] = {
 #include "./joust.h"
 };
-
+DRAM_ATTR uint8_t pbiROM[2 * 1024] = {0};
 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
@@ -890,7 +890,7 @@ void IRAM_ATTR iloop_pbi() {
                 if ((r0 & (casInh_Mask)) != 0) {
                     REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask); //    enable DATA lines for output
                     //REG_WRITE(GPIO_OUT1_REG, (data << dataShift));            //    output data to data bus
-                    REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));            //    output data to data bus
+                    REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | mpdMask);            //    output data to data bus
                     // timing requirement: 70-80 ticks to here
                    profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
                 }
@@ -907,7 +907,15 @@ void IRAM_ATTR iloop_pbi() {
                 __asm__("nop");
                 uint16_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
                 *ramAddr = data;
-                if (addr == 0xd1ff) mpdMask = (data = 0x1) ? 0x10000000 : 0; // don't think this will fit
+                if (addr == 0xd1ff) {
+                    if (data == 0x1) {
+                        mpdMask = 0; // TODO 0x10000000;
+                        banks[4] = &pbiROM[0];
+                    } else { 
+                        mpdMask = 0;
+                        banks[4] = &atariRam[0];
+                    }
+                }
                 profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
                 //ramWrites++;
             }
