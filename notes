@@ -1,3 +1,12 @@
+Got timing back to reasonable. 
+hannel 0: range 129-140, jitter 11
+channel 1: range 82-85, jitter 3
+channel 2: range 100-102, jitter 2
+channel 3: range 0-0, jitter 0
+Total samples 91274771 implies 50.71 sec sampling
+
+
+
 Actively drive extEnt and MPD rather than just disabling outputs.  Passes 1 min test. 
 Not sure if MPD works yet, basic seems to hang with poke d1ff,1, possibly basic need mathpack
 But doesn't hang in bootup as it should when os tries to access pbi init in pbiROM

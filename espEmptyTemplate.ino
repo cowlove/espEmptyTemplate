@@ -67,10 +67,10 @@ static const struct {
    bool histogram     = 1;
    bool pbiDevice     = 1;
 #else
-   bool logicAnalyzer = 1;
+   bool logicAnalyzer = 0;
    bool pbiDevice     = 0;
    bool maskCore0Int  = 0;
-   bool busAnalyzer   = 0;
+   bool busAnalyzer   = 1;
    bool tcpSendPsram  = 1;
    bool histogram     = 0;
 #endif
@@ -161,13 +161,12 @@ DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
     0x00,                          // 6
     0x00,                          // 7
     0x00,                          // 8
-    //0x60,                      // D819 RTS
     0x4c,                           // D819 JMP ($4C)
-    0x1c,                      // D81A Init Vector LO
-    0xd8,                      // D81B Init vector hi
+    0x1c,                           // D81A Init Vector LO
+    0xd8,                           // D81B Init vector hi
     
     // D81C INIT routine 
-    //0x60,                        // RTS 
+    0x60,                        // RTS 
     0x38, 0xea, 0xea, 0xea, 0xea, 0xb0, 0xfe // sec, nop,nop, nop, bcs -2 
 };
 #endif // #if 0 
@@ -857,36 +856,28 @@ void IRAM_ATTR iloop_logicAnalyzer() {
         
 
 void IRAM_ATTR iloop_busMonitor() {	
-    uint32_t startTsc = XTHAL_GET_CCOUNT();
-    uint32_t r0, r1;
-    uint32_t tsc, lastTsc;
-    uint32_t loopCount = 0;
     uint32_t *out = dram;
     uint32_t *dram_end = dram + dma_sz / sizeof(uint32_t);
-    minLoopElapsed = 0xffff;
-    maxLoopElapsed = 0;
     const uint16_t triggerAddress       = 0xd1ff;
     const uint16_t triggerMask          = 0xffff;
     //const uint16_t triggerMask          = 0x0;
     int triggerCount                    = 1;    // 0 for no trigger
     int captureDepth                    = 0;    // 0 for fill memory;
     while(!stop) {
-        //uint32_t *nextOut = dram + dma_sz * ((dramLoopCount + 1) & (dma_bufs - 1)) / sizeof(uint32_t);
-        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {} // wait falling edge 
-        while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {} // wait rising edge 
-        tsc = XTHAL_GET_CCOUNT();
-        uint32_t elapsed = tsc - lastTsc;
-        lastTsc = tsc;
+        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}; // wait falling edge 
+        uint32_t tsc = XTHAL_GET_CCOUNT();
+        uint32_t *nextOut = dram + dma_sz * ((dramLoopCount + 1) & (dma_bufs - 1)) / sizeof(uint32_t);
+        uint32_t *nextEnd = nextOut + dma_sz / sizeof(uint32_t);
 
-        r0 = REG_READ(GPIO_IN_REG);
-        r1 = REG_READ(GPIO_IN1_REG);
- 
-#ifdef HAVE_RESET_PIN
-        if ((r1 & resetMask) == 0)
-            continue;
-#endif
+        while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {} // wait rising edge 
+        uint32_t r0 = REG_READ(GPIO_IN_REG);
+        while(XTHAL_GET_CCOUNT() - tsc < 90) {}
+        //__asm__("nop");__asm__("nop");__asm__("nop");__asm__("nop");
+        uint32_t r1 = REG_READ(GPIO_IN1_REG); 
+
         if ((r0 & refreshMask) == 0)
             continue;
+
         uint16_t addr = (r0 & addrMask) >> addrShift; 
 
         if (triggerCount > 0) {
@@ -895,44 +886,24 @@ void IRAM_ATTR iloop_busMonitor() {
             if (triggerCount > 0) continue;
         }
 
-#ifdef HAVE_RESET_PIN
-        if ((r1 & resetMask) != 0) {
-            r0 |= copyResetMask;
-        } else {
-            r0 &= ~copyResetMask;
-        }
-#endif
+#if 0 
         if ((r1 & mpdMask) != 0) {
             r0 |= copyMpdMask;
         } else {
             r0 &= ~copyMpdMask;
         }
-
-
+#endif
         r0 &= ~copyDataMask;
         r0 |= (r1 & dataMask) >> dataShift << copyDataShift;
-        if (opt.histogram) { 
-            *out++ = (loopCount++ > 10) ?  elapsed : 0 ;
-        } else {
-            *out++ = r0;
-        }
+        *out++ = r0;
+
         if (out == dram_end) { 
             dramLoopCount++;
-            out = dram + dma_sz * (dramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t);
-            //out = nextOut;
-            dram_end = out + dma_sz / sizeof(uint32_t);
+            out = nextOut;
+            dram_end = nextEnd;
         }
-#if 0
-        if (loopCount++ > 5) {
-            uint32_t elapsed = tsc - lastTsc;
-            if (elapsed > maxLoopElapsed) maxLoopElapsed = elapsed;
-            if (elapsed < minLoopElapsed) minLoopElapsed = elapsed;
-        }
-#endif 
-        //lastTsc = tsc;
         __asm__ __volatile__("nop"); // 1 cycle
     }
-    dramElapsedTsc = startTsc - XTHAL_GET_CCOUNT();
 }
 
 void IRAM_ATTR iloop_bitResponse() {
@@ -992,14 +963,17 @@ void IRAM_ATTR iloop_pbi() {
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {};                      // wait falling clock edge
     uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-    uint32_t currentMpdMask = extSel_Mask | mpdMask; // todo use to keep mpdMask precomputed
+
+    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
+    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
     do {    
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        REG_WRITE(GPIO_OUT1_REG, mpdMask);   // ext sel inactive low, mpd inactive high                
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);               // stop driving data lines, if they were previously driven                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-        //__asm__("nop"); // needs at least 1 nop between REG_WRITE/REG_READ(?) 
+        __asm__("nop");
+        __asm__("nop");
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
+        REG_WRITE(GPIO_OUT1_W1TC_REG, (0xff << dataShift));            //    output data to data bus
         uint32_t r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
 
         uint16_t addr = (r0 & addrMask) >> addrShift;
@@ -1008,8 +982,8 @@ void IRAM_ATTR iloop_pbi() {
             uint8_t data = *ramAddr;
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
             if ((r0 & (casInh_Mask)) != 0) {
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask | mpdMask); //    enable DATA lines for output
-                REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | currentMpdMask);            //    output data to data bus
+                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
+                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));            //    output data to data bus
                 // timing requirement: 70-80 ticks to here
                 profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
             } else {
@@ -1019,26 +993,23 @@ void IRAM_ATTR iloop_pbi() {
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         
         } else {                                                                   //  2WRITE  TODO - we dont do extsel/mpd here yet
-            //TODO: if ((r0 & casInh_Mask)  != 0) REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask);                       //    enable DATA lines for output
             if ((r0 & (casInh_Mask)) == 0) 
                 ramAddr = &dummyStore;
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  
-            __asm__("nop");
-            __asm__("nop");
-            __asm__("nop");
-            __asm__("nop");
+            //__asm__("nop");__asm__("nop");__asm__("nop");__asm__("nop");
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
+#if 1
             if (addr == 0xd1ff) {
                 if (data == 0x1) {
-                    currentMpdMask = extSel_Mask; // set mpdMask active low 
+                    REG_WRITE(GPIO_OUT1_W1TC_REG, mpdMask);          
                     banks[0xd800 >> bankShift] = &pbiROM[0];
-                    //atariRam[1666] = 79; 
-                } else { 
-                    currentMpdMask = extSel_Mask | mpdMask; // mpdMask inactive high 
+                } else {
+                    REG_WRITE(GPIO_OUT1_W1TS_REG, mpdMask);          
                     banks[0xd800 >> bankShift] = &atariRam[0xd800];
                 }
             }
+#endif 
             profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
             //ramWrites++;
         }
