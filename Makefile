@@ -55,3 +55,9 @@ backtrace:
 	tr ' ' '\n' | addr2line -f -i -e ./build/${BOARD}/*.elf
 
 
+pbirom.h:  pbirom.o65
+	./bin2src.py pbirom.o65 > pbirom.h
+
+pbirom.o65:  pbirom.asm
+	xa pbirom.asm -o pbirom.o65
+

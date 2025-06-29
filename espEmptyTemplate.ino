@@ -43,13 +43,13 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-//#define FAKE_CLOCK
+#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1;
    float histRunSec   = 120;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 120;
+   float histRunSec   = -120;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -66,8 +66,7 @@ static const struct {
    bool busAnalyzer   = 0;
    bool tcpSendPsram  = 0;
    bool histogram     = 1;
-   bool pbiDevice     = 
-   1;
+   bool pbiDevice     = 1;
 #else
    bool logicAnalyzer = 0;
    bool pbiDevice     = 0;
@@ -138,40 +137,7 @@ DRAM_ATTR uint8_t cartROM[] = {
 DRAM_ATTR uint8_t pbiROM[2 * 1024] = {79};
 #else 
 DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
-    // TODO : pull this in from a 6502 object file, use an assembler 
-    0x0f,                     // D800 ROM cksum lo
-    0x0f,                     // D801 ROM cksum hi
-    0x01,                     // D802 ROM version
-    0x80,                     // D803 ID num
-    0x01,                     // D804 Device Type
-    0x4c,                     // 5
-    0x00,                     // 6
-    0x00,                     // 7   
-    0x4c,                     // D808 JMP (0x4C)
-    0x00,                     // D809 ISR vect LO
-    0xd8,                     // D80A ISR vect HI
-    0x91,                     // D80B ID num 2 (0x91)
-    0x65,                     // D80C Device Name (ASCII)
-    0x00,                        // D
-    0x00,                        // E
-    0x00,                        // F
-    0x00,                         // 0
-    0x00,                         // 1
-    0x00,                         // 2
-    0x00,                          // 3
-    0x00,                          // 4
-    0x00,                          // 5
-    0x00,                          // 6
-    0x00,                          // 7
-    0x00,                          // 8
-    0x4c,                           // D819 JMP ($4C)
-    0x1c,                           // D81A Init Vector LO
-    0xd8,                           // D81B Init vector hi
-    
-    // D81C INIT routine 
-    //0x60,                        // RTS 
-    0xA9, 0x68, 0x8d, 0x00, 0x06, 0xA9, 0x60, 0x8d, 0x01, 0x06, 0x60, 
-    //0x38, 0xea, 0xea, 0xea, 0xea, 0xb0, 0xfe // sec, nop,nop, nop, bcs -2 
+#include "./pbirom.h"
 };
 #endif // #if 0 
 
@@ -779,9 +745,11 @@ void setup() {
         ledcAttachChannel(readWritePin, testFreq / 4, 1, 2);
         ledcWrite(readWritePin, 1);
 
+#if 1
         // write 0xd1ff to address pins to simulate worst-case slowest address decode
         for(int bit = 0; bit < 16; bit ++)  
-            pinMode(addr0Pin + bit, ((0xd1fe >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
+            pinMode(addr0Pin + bit, ((0xd1ff >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
+#endif 
 
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(mpdPin, INPUT_PULLDOWN);
@@ -1021,7 +989,6 @@ void IRAM_ATTR iloop_pbi() {
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
             if ((r0 & (casInh_Mask)) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
-
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | gpio1OutSetMask);
  
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
