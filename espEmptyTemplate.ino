@@ -46,10 +46,10 @@ static const struct {
 //#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1;
-   float histRunSec   = 30;
+   float histRunSec   = 120;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = -60;
+   float histRunSec   = 60;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -65,7 +65,8 @@ static const struct {
    bool busAnalyzer   = 0;
    bool tcpSendPsram  = 0;
    bool histogram     = 1;
-   bool pbiDevice     = 1;
+   bool pbiDevice     = 
+   1;
 #else
    bool logicAnalyzer = 0;
    bool pbiDevice     = 0;
@@ -471,7 +472,7 @@ void IRAM_ATTR threadFunc(void *) {
     stop = true;
     int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
     startTsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - startTsc < 24 * 1000000) {}
+    while(XTHAL_GET_CCOUNT() - startTsc < 2 * 24 * 1000000) {}
 
     if (opt.maskCore0Int) { 
         portENABLE_INTERRUPTS();
@@ -544,7 +545,7 @@ void IRAM_ATTR threadFunc(void *) {
                 if (profilers[c].buckets[i] > 0) first = i;
             }
             yield();
-            v.push_back(sfmt("channel %d: range %d-%d, jitter %d", c, first, last, last - first));
+            v.push_back(sfmt("channel %d: range %3d -%3d, jitter %3d", c, first, last, last - first));
         }
         uint64_t totalEvents = 0;
         for(int i = 0; i < profilers[0].maxBucket; i++)
@@ -703,7 +704,7 @@ void setup() {
     }
 
     //vector<int> outputPins = {extSel_Pin, data0Pin};
-    if (1) { 
+    if (opt.logicAnalyzer) { 
         int bundleA_gpios[] = {clockPin, casInh_pin, extSel_Pin, mpdPin, addr0Pin + 0, addr0Pin + 1, data0Pin + 0, data0Pin + 1};
         dedic_gpio_bundle_config_t bundleA_config = {
             .gpio_array = bundleA_gpios,
@@ -723,16 +724,38 @@ void setup() {
             };
             ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
         }
-        if (opt.bitResponse) { // can't use direct GPIO_ENABLE or GPIO_OUT registers after setting up dedic_gpio_bundle 
-            int bundleB_gpios[] = {data0Pin, data0Pin + 1, data0Pin + 2, data0Pin + 3, data0Pin + 4, data0Pin + 5, data0Pin + 6, data0Pin + 7};
+    } else { 
+        // pbi device - only monitor one pin so we don't have to mask bits after reading dedic_io
+        int bundleA_gpios[] = {clockPin};
+        dedic_gpio_bundle_config_t bundleA_config = {
+            .gpio_array = bundleA_gpios,
+            .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
+            .flags = {
+                .in_en = 1,
+                .out_en = 0
+            },
+        };
+        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleIn));
+        if (0) { 
+            int bundleB_gpios[] = {ledPin};
             dedic_gpio_bundle_config_t bundleB_config = {
                 .gpio_array = bundleB_gpios,
                 .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
                 .flags = { .out_en = 1 },
             };
             ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
-            REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                         //    enable DATA lines for output
         }
+    }
+
+    if (opt.bitResponse) { // can't use direct GPIO_ENABLE or GPIO_OUT registers after setting up dedic_gpio_bundle 
+        int bundleB_gpios[] = {data0Pin, data0Pin + 1, data0Pin + 2, data0Pin + 3, data0Pin + 4, data0Pin + 5, data0Pin + 6, data0Pin + 7};
+        dedic_gpio_bundle_config_t bundleB_config = {
+            .gpio_array = bundleB_gpios,
+            .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
+            .flags = { .out_en = 1 },
+        };
+        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                         //    enable DATA lines for output
     }
     if (opt.fakeClock) { // simulate clock signal 
         pinMode(clockPin, OUTPUT);
@@ -740,14 +763,15 @@ void setup() {
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
 
-#if 1 // why doesn't PWM readWritePin work to alternate between R & W
         pinMode(readWritePin, OUTPUT);
         digitalWrite(readWritePin, 0);
         ledcAttachChannel(readWritePin, testFreq / 4, 1, 2);
         ledcWrite(readWritePin, 1);
-#else 
-        pinMode(readWritePin, INPUT_PULLUP);
-#endif
+
+        // write 0xd1ff to address pins to simulate worst-case slowest address decode
+        for(int bit = 0; bit < 16; bit ++)  
+            pinMode(addr0Pin + bit, ((0xd1ff >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
+
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(mpdPin, INPUT_PULLDOWN);
         pinMode(refreshPin, INPUT_PULLUP);
@@ -967,69 +991,56 @@ void IRAM_ATTR iloop_pbi() {
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
+    //uint32_t gpio1OutClearMask = 0;
+    uint32_t gpio1OutSetMask = mpdMask;
+
     do {    
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         __asm__("nop");
         __asm__("nop");
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
-        REG_WRITE(GPIO_OUT1_W1TC_REG, (0xff << dataShift));            //    output data to data bus
-        uint32_t r0 = REG_READ(GPIO_IN_REG);                                             // read address, RW flag and casInh_  from bus
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);            
+        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
+        uint32_t r0 = REG_READ(GPIO_IN_REG);
 
         uint16_t addr = (r0 & addrMask) >> addrShift;
         uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
-        if ((r0 & readWriteMask) != 0) {                                            // 1READ       
+        if ((r0 & readWriteMask) != 0) { // XXREAD
             uint8_t data = *ramAddr;
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
             if ((r0 & (casInh_Mask)) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
-                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));            //    output data to data bus
-                // timing requirement: 70-80 ticks to here
-                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));
+                // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
+                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
             } else {
-                // few cycles available here to do misc work 
+                // ~80 cycles available here to do misc work 
             }
             if (stop) break;
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
         
-        } else {                                                                   //  2WRITE  TODO - we dont do extsel/mpd here yet
+        } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
             if ((r0 & (casInh_Mask)) == 0) 
                 ramAddr = &dummyStore;
-            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};                  
-            //__asm__("nop");__asm__("nop");__asm__("nop");__asm__("nop");
+            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
-#if 1
-            if (addr == 0xd1ff) {
-                if (data == 0x1) {
-                    REG_WRITE(GPIO_OUT1_W1TC_REG, mpdMask);          
+#if 0
+            if (addr == 0xd1ff) { // 30 cycles, makes timing late.  Can we set a flag and move REG_WRITE to next cycle?
+                if (data == 1) { 
+                    //gpio1OutClearMask = mpdMask;
+                    gpio1OutSetMask = 0;
                     banks[0xd800 >> bankShift] = &pbiROM[0];
                 } else {
-                    REG_WRITE(GPIO_OUT1_W1TS_REG, mpdMask);          
+                    //gpio1OutClearMask = 0;
+                    gpio1OutSetMask = mpdMask;
                     banks[0xd800 >> bankShift] = &atariRam[0xd800];
                 }
             }
-#endif 
+#endif
             profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
             //ramWrites++;
         }
-#if 0 // was old casInh low loop 
-        } else {
-            uint32_t r1 = REG_READ(GPIO_IN1_REG);
-            currentResetValue = (r1 & resetMask) != 0;
-            if ((r1 & resetMask) == 0) {
-                lastResetLow = XTHAL_GET_CCOUNT();
-                recentReset = true;
-            } else if (recentReset && (XTHAL_GET_CCOUNT() - lastResetLow) >  100 * 1000000) {
-                recentReset = false;
-                cumulativeResets++;
-                __asm__ __volatile__("nop");
-            }
-            //ramReads++; // had to tuck fake ramReads++ here, no time in read loop.  Had to exclude profiler                
-            profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // profile currently 15 cycles 
-            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-        }
-#endif
         profilers[0].add(tscFall - lastTscFall);  // currently 15 cycles 
         lastTscFall = tscFall;
     } while(1);
