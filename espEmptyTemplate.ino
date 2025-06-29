@@ -43,7 +43,7 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-#define FAKE_CLOCK
+//#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1;
    float histRunSec   = 120;
@@ -131,15 +131,11 @@ static const int bankShift = 16 - bankBits;
 DRAM_ATTR uint8_t *banks[nrBanks];
 DRAM_ATTR uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR uint8_t cartROM[] = {
-#include "./joust.h"
+#include "joust.h"
 };
-#if 0
-DRAM_ATTR uint8_t pbiROM[2 * 1024] = {79};
-#else 
 DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
-#include "./pbirom.h"
+#include "pbirom.h"
 };
-#endif // #if 0 
 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
