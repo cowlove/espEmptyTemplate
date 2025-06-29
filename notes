@@ -1,4 +1,11 @@
-Now broken:
+Finally fixed. PBI works, runs small init code.   
+channel 0: range  71 -119, jitter  48
+channel 1: range  72 - 85, jitter  13
+channel 2: range   0 -  0, jitter   0
+channel 3: range   0 -  0, jitter   0
+Total samples 57270416 implies 31.82 sec sampling
+
+
 
 
 

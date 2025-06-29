@@ -49,7 +49,7 @@ static const struct {
    float histRunSec   = 120;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 60;
+   float histRunSec   = 120;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -58,7 +58,7 @@ static const struct {
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
    bool dumpPsram     = 0;
-   bool forceAtariMemTest = 0;
+   bool forceAtariMemTest = 1;
 #define PBI_DEVICE
 #ifdef PBI_DEVICE
    bool logicAnalyzer = 0;
@@ -184,7 +184,7 @@ DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
 //                               +--casInh_ / ROM read
 //                               | +---Clock
 //                               | | +--- ADDR                               +-- RW
-//                               | | |                                       |  +-- refresh in              +--RESET in
+//                               | | |                                       |  +-- refresh in              +--MPD out
 //                               | | |                                       |  |   +---DATA                |  +-- ext sel out 
 //                               | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
 static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
@@ -781,7 +781,7 @@ void setup() {
 
         // write 0xd1ff to address pins to simulate worst-case slowest address decode
         for(int bit = 0; bit < 16; bit ++)  
-            pinMode(addr0Pin + bit, ((0xd1ff >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
+            pinMode(addr0Pin + bit, ((0xd1fe >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
 
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(mpdPin, INPUT_PULLDOWN);
@@ -1022,14 +1022,12 @@ void IRAM_ATTR iloop_pbi() {
             if ((r0 & (casInh_Mask)) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
 
-                // one of these 2 approaches
-                //REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | gpio1OutSetMask);
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | gpio1OutSetMask);
  
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
-                //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
+                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
             } else {
-                // ~80 cycles available here to do misc work 
+                // ~80 cycles intermittently available here to do misc infrequent work 
             }
             if (stop) break;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
@@ -1038,6 +1036,8 @@ void IRAM_ATTR iloop_pbi() {
             if ((r0 & (casInh_Mask)) == 0) 
                 ramAddr = &dummyStore;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+            __asm__("nop"); 
+            __asm__("nop"); 
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
             if (addr == 0xd1ff) {
