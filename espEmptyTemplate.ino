@@ -58,6 +58,7 @@ static const struct {
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
    bool dumpPsram     = 0;
+   bool forceAtariMemTest = 0;
 #define PBI_DEVICE
 #ifdef PBI_DEVICE
    bool logicAnalyzer = 0;
@@ -137,6 +138,7 @@ DRAM_ATTR uint8_t cartROM[] = {
 DRAM_ATTR uint8_t pbiROM[2 * 1024] = {79};
 #else 
 DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
+    // TODO : pull this in from a 6502 object file, use an assembler 
     0x0f,                     // D800 ROM cksum lo
     0x0f,                     // D801 ROM cksum hi
     0x01,                     // D802 ROM version
@@ -167,8 +169,9 @@ DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
     0xd8,                           // D81B Init vector hi
     
     // D81C INIT routine 
-    0x60,                        // RTS 
-    0x38, 0xea, 0xea, 0xea, 0xea, 0xb0, 0xfe // sec, nop,nop, nop, bcs -2 
+    //0x60,                        // RTS 
+    0xA9, 0x68, 0x8d, 0x00, 0x06, 0xA9, 0x60, 0x8d, 0x01, 0x06, 0x60, 
+    //0x38, 0xea, 0xea, 0xea, 0xea, 0xb0, 0xfe // sec, nop,nop, nop, bcs -2 
 };
 #endif // #if 0 
 
@@ -406,7 +409,13 @@ void IRAM_ATTR threadFunc(void *) {
     }
     int lastCycleCount = 0;
     uint32_t startTsc = XTHAL_GET_CCOUNT();
+    int fakeRamErrCount = opt.forceAtariMemTest ? 2 : 0;
+    uint8_t lastRamValue = 0;
     while(1) { 
+        if (fakeRamErrCount > 0 && atariRam[1666] == 0) { 
+            fakeRamErrCount--;
+            atariRam[1666] = 1;
+        }
         //cycleCount++;
         if (psramLoopCount != *drLoopCount) {
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
@@ -609,6 +618,8 @@ void IRAM_ATTR threadFunc(void *) {
         printf("bank 0xd8 set to PBI ROM\n");
     }
     printf("atariRam[754] = %d\n", atariRam[754]);
+    printf("pbiROM[0x100] = %d\n", pbiROM[0x100]);
+    printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
     
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
@@ -991,16 +1002,16 @@ void IRAM_ATTR iloop_pbi() {
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
-    //uint32_t gpio1OutClearMask = 0;
-    uint32_t gpio1OutSetMask = mpdMask;
+    uint32_t gpio1OutClearMask = 0;
+    uint32_t gpio1OutSetMask = mpdMask | extSel_Mask;
 
     do {    
-        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}                      // wait falling clock edge
+        while((dedic_gpio_cpu_ll_read_in()) != 0) {}                      // wait falling clock edge
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         __asm__("nop");
         __asm__("nop");
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);            
-        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
+        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | gpio1OutClearMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
 
         uint16_t addr = (r0 & addrMask) >> addrShift;
@@ -1010,39 +1021,47 @@ void IRAM_ATTR iloop_pbi() {
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
             if ((r0 & (casInh_Mask)) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
-                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift));
+
+                // one of these 2 approaches
+                //REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | gpio1OutSetMask);
+                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | gpio1OutSetMask);
+ 
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
-                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
+                //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
             } else {
                 // ~80 cycles available here to do misc work 
             }
             if (stop) break;
-            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
+            while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
             if ((r0 & (casInh_Mask)) == 0) 
                 ramAddr = &dummyStore;
-            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {};
+            while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
-#if 0
-            if (addr == 0xd1ff) { // 30 cycles, makes timing late.  Can we set a flag and move REG_WRITE to next cycle?
+            if (addr == 0xd1ff) {
                 if (data == 1) { 
-                    //gpio1OutClearMask = mpdMask;
-                    gpio1OutSetMask = 0;
+                    //REG_WRITE(GPIO_OUT1_W1TC_REG, mpdMask);
+                    gpio1OutClearMask = mpdMask;
+                    gpio1OutSetMask = extSel_Mask;
                     banks[0xd800 >> bankShift] = &pbiROM[0];
                 } else {
-                    //gpio1OutClearMask = 0;
-                    gpio1OutSetMask = mpdMask;
+                    //REG_WRITE(GPIO_OUT1_W1TS_REG, mpdMask); 
+                    gpio1OutClearMask = 0;
+                    gpio1OutSetMask = extSel_Mask | mpdMask; 
                     banks[0xd800 >> bankShift] = &atariRam[0xd800];
                 }
             }
-#endif
-            profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+            //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
             //ramWrites++;
         }
-        profilers[0].add(tscFall - lastTscFall);  // currently 15 cycles 
-        lastTscFall = tscFall;
+        if (0) { 
+            profilers[0].add(tscFall - lastTscFall);  
+            lastTscFall = tscFall;
+        } else { 
+            profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
+        }
     } while(1);
 }
 
