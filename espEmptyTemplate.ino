@@ -58,7 +58,7 @@ static const struct {
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
    bool dumpPsram     = 0;
-   bool forceAtariMemTest = 1;
+   bool forceMemTest  = 0;
 #define PBI_DEVICE
 #ifdef PBI_DEVICE
    bool logicAnalyzer = 0;
@@ -371,12 +371,29 @@ void IRAM_ATTR threadFunc(void *) {
     }
     int lastCycleCount = 0;
     uint32_t startTsc = XTHAL_GET_CCOUNT();
-    int fakeRamErrCount = opt.forceAtariMemTest ? 2 : 0;
+    int fakeRamErrCount = opt.forceMemTest ? 2 : 0;
     uint8_t lastRamValue = 0;
     while(1) { 
         if (fakeRamErrCount > 0 && atariRam[1666] == 0) { 
             fakeRamErrCount--;
             atariRam[1666] = 1;
+        }
+        
+        if (1) { // stubbed out dummy IO to PBI device 
+            struct PbiIocb {
+                uint8_t req;
+                uint8_t a;
+                uint8_t x;
+                uint8_t y;
+            };
+            PbiIocb *iocb = (PbiIocb *)&pbiROM[0x20];
+            static uint8_t dummyReadChar = 'A';
+            
+            if (iocb->req != 0) {
+                iocb->a = dummyReadChar++;
+                iocb->y = 1;
+                iocb->req = 0;
+            }
         }
         //cycleCount++;
         if (psramLoopCount != *drLoopCount) {
@@ -988,7 +1005,7 @@ void IRAM_ATTR iloop_pbi() {
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | gpio1OutSetMask);
  
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
-                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
+                //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
             } else {
                 // ~80 cycles intermittently available here to do misc infrequent work 
             }
@@ -1023,7 +1040,7 @@ void IRAM_ATTR iloop_pbi() {
             profilers[0].add(tscFall - lastTscFall);  
             lastTscFall = tscFall;
         } else { 
-            profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
+            //profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
         }
     } while(1);
 }
