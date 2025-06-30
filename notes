@@ -1,3 +1,9 @@
+Experimenting with accessing PSRAM/flash from core0.   
+1) PSRAM works with interrupts disabled, but smears out core1 timings about 10 ticks
+
+
+
+
 Finally fixed. PBI works, runs small init code.   
 channel 0: range  71 -119, jitter  48
 channel 1: range  72 - 85, jitter  13

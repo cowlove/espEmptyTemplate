@@ -18,6 +18,11 @@
 #include <freertos/xtensa_timer.h>
 #include <freertos/xtensa_rtos.h>
 
+//#include <esp_spi_flash.h>
+#include "esp_partition.h"
+#include "esp_err.h"
+#include "esp_flash.h"
+
 
 
 #else 
@@ -46,7 +51,7 @@ static const struct {
 //#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1;
-   float histRunSec   = 120;
+   float histRunSec   = 20;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -120;
@@ -58,7 +63,7 @@ static const struct {
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
    bool dumpPsram     = 0;
-   bool forceMemTest  = 0;
+   bool forceMemTest  = 1;
 #define PBI_DEVICE
 #ifdef PBI_DEVICE
    bool logicAnalyzer = 0;
@@ -209,18 +214,32 @@ static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*
     return false;
 }
 
-void busyWaitCCount(uint32_t cycles) { 
+inline void busyWaitCCount(uint32_t cycles) { 
     uint32_t tsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
 }
 
-void busywait(float sec) {
+inline void busywait(float sec) {
     uint32_t tsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - tsc < sec * 240 * 1000000) {};
 }
 
+
+
+
 #pragma GCC optimize("O1") // avoid register write combining
-void NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
+
+inline void simulateI2c(uint8_t pin) {
+    int cycles = 240 * 1000000 / 100000 / 2;
+    for(int i = 0; i < 1; i++) { 
+        //dedic_gpio_cpu_ll_write_all(1);
+        busyWaitCCount(cycles);
+        //dedic_gpio_cpu_ll_write_all(0);
+        busyWaitCCount(cycles);
+    }
+}
+
+inline void NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
     //busyWaitCCount(100);
     //return;
 
@@ -308,12 +327,43 @@ struct Hist2 {
     void clear() { bzero(buckets, sizeof(buckets)); }
 };
 
+struct AtariIOCB { 
+uint8_t ICHID,
+        ICDNO,  // Device number
+        ICCOM,  // Command byte 
+        ICSTA,  // Status returned
+        ICBAL,  // Buffer address (points to 0x9b-terminated string for open command)
+        ICBAH,
+        ICPTL,  // Address of driver put routine
+        ICPTH,
+        ICBLL,  // Buffer length 
+        ICBLH,
+        ICAX1,
+        ICAX2,
+        ICAX3,
+        ICAX4,
+        ICAX5,
+        ICAX6;
+};
+
+const struct {
+    int IOCB0 = 0x340;
+    int NUMIOCB = 0x8;
+    int IOCB_CMD_CLOSE = 0xc;
+    int IOCB_CMD_OPEN = 0x3;
+    int IOCB_OPEN_READ = 0x4;
+    int IOCB_OPEN_WRITE = 0x8;
+    int NEWPORT = 0x31ff;
+} AtariDef;
+
 static const int numProfilers = 4;
 Hist2 profilers[numProfilers];
 int ramReads = 0, ramWrites = 0;
 
 void IRAM_ATTR threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
+
+    SPIFFSVariableESP32Base::begin();
 
     int elapsedSec = 0;
     int pi = 0;
@@ -335,7 +385,7 @@ void IRAM_ATTR threadFunc(void *) {
         }
     }
 
-    NEWneopixelWrite(ledPin,255,255,255);
+    NEWneopixelWrite(ledPin,25,25,25);
     delay(100);
     NEWneopixelWrite(ledPin,0,0,0);
 
@@ -356,29 +406,95 @@ void IRAM_ATTR threadFunc(void *) {
     int maxBufsUsed = 0;
     //neopixelWrite(ledPin, 0, 8, 0);
     
+
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+    printf("partition find returned %p\n", partition);
+
+    if (1) { 
+        static uint32_t buf[256];
+        int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
+        printf("flash_read() returned %d\n", e);
+    }
+
+
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
+    uint32_t oldint;
     if (opt.maskCore0Int) { 
         disableCore0WDT();
-        //printf("CORE0: disabling interrupts\n"); 
-        //fflush(stdout);
-        //delay(100);
-        //yield();
-        //busywait(.5);
         portDISABLE_INTERRUPTS();
         _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
-        //uint32_t oldint;
-        //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
+        //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
     }
     int lastCycleCount = 0;
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     int fakeRamErrCount = opt.forceMemTest ? 2 : 0;
     uint8_t lastRamValue = 0;
-    while(1) { 
+
+ 
+    while(1) {
+        if (1) { // why does this work when simulateI2c or even busywait(1) break timing?
+            for(int i = 0; i < 32; i++) { // simulated I2c 
+                uint32_t stsc;
+                dedic_gpio_cpu_ll_write_all(0);
+                stsc = XTHAL_GET_CCOUNT();
+                while(XTHAL_GET_CCOUNT() - stsc < 2400) {}
+                dedic_gpio_cpu_ll_write_all(1);
+                stsc = XTHAL_GET_CCOUNT();
+                while(XTHAL_GET_CCOUNT() - stsc < 2400) {}
+            }
+        }
+        //NEWneopixelWrite(ledPin, 0, 0, 0);
+        //simulateI2c(ledPin);
+        if (0 && partition != NULL) {
+            // Even this doesn't work - esp_* calls usually hang even if interrupts are enabled on core0, 
+            // presumably because it tries to synch with core1.   Try compiling lib_idf to completely ignore core1 
+            // and maybe we can temporarily enable interrupts on core0 to do IO?  Would require pausing the 6502 
+            // 
+            // Maybe we can use super-low-level spi routines to directly access flash from core0?  
+            
+            uint32_t oldint;
+            const char data[] = "This is the data to write";
+            //__asm__ __volatile__("rsil %0, 0" : "=r"(oldint) : );
+            enableCore0WDT();
+            portENABLE_INTERRUPTS();
+    
+            int err = esp_partition_write(partition, 0, data, sizeof(data));
+
+            portDISABLE_INTERRUPTS();
+            disableCore0WDT();
+
+            //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
+            if (err == ESP_OK) {
+                //printf("partition write returned %d\n", err);
+            }
+        }
+        if (0) {
+            // same with this, hangs if interrupts are masked on core1 
+            static uint32_t buf[256];
+            int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
+            //printf("flash_read() returned %d\n", e);
+        }
         if (fakeRamErrCount > 0 && atariRam[1666] == 0) { 
             fakeRamErrCount--;
             atariRam[1666] = 1;
         }
-        
+
+        if (0) { // why does this do-nothing loop smear out core1 timings?  
+            static uint32_t *p = 0;
+            //*p = 0;
+            //p++;
+            if (p >= psram + psram_sz / sizeof(uint32_t))
+                p = psram;
+        }
+
+        if (0) { // why does enabling this do-nothing loop smear out core1 timings?  
+            static uint32_t *p = 0;
+            //*p = 0;
+            //p++;
+            if (p >= psram + psram_sz / sizeof(uint32_t))
+                p = psram;
+        }
         if (1) { // stubbed out dummy IO to PBI device 
             struct PbiIocb {
                 uint8_t req;
@@ -466,9 +582,11 @@ void IRAM_ATTR threadFunc(void *) {
         portENABLE_INTERRUPTS();
         _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi;
         enableCore0WDT();
+        //__asm__("wsr %0,PS" : : "r"(oldint));
     }
 
     printf("STOPPED. max dma bufs in use %d\n", maxBufsUsed);
+
     uint32_t startUsec = micros();
     while(cbCount < psramLoopCount && micros() - startUsec < 1000000) {
         delay(50);
@@ -618,6 +736,7 @@ void setup() {
     delay(500);
     Serial.begin(115200);
     printf("setup()\n");
+    //spi_flash_init();
     if (0) { 
         pinMode(ledPin, OUTPUT);
         digitalWrite(ledPin, 0);
@@ -631,7 +750,6 @@ void setup() {
     }
 
     if (opt.histogram) { 
-        SPIFFSVariableESP32Base::begin();
         SPIFFSVariable<vector<string>> hist("/histogram", {});
         vector<string> v = hist;
         for(auto s : v) { 
@@ -1191,7 +1309,7 @@ void loop() {
     uint32_t oldint;
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi;  // saves 5 cycles, could save more 
-    //__asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
+    //__asm__ __volatile__("rsil %1, 15" : "=r"(oldint) : : );
 
     maxElapsed1 = maxElapsed2 = maxElapsedIndex1 = -1;
     if (opt.bitResponse) {
