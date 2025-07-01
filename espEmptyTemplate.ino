@@ -31,6 +31,7 @@
 #include "jimlib.h"
 #include "LittleFS.h"
 
+#include "ascii2keypress.h"
 // Usable pins
 // 0-18 21            (20)
 // 38-48 (6-16)     (11)
@@ -177,7 +178,7 @@ volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 #endif 
 #endif 
 
-int psram_sz = 7.8 * 1024 * 1024;
+int psram_sz = 6 * 1024 * 1024;
 uint32_t *psram;
 static const int dma_sz = 4096 - 64;
 static const int dma_bufs = 2; // must be power of 2
@@ -340,7 +341,7 @@ struct Hist2 {
 
 
     struct AtariIOCB { 
-    uint8_t ICHID,
+    uint8_t ICHID,  // handler 
             ICDNO,  // Device number
             ICCOM,  // Command byte 
             ICSTA,  // Status returned
@@ -360,6 +361,7 @@ struct Hist2 {
 
 const struct AtariDefStruct {
     int IOCB0 = 0x340;
+    int ZIOCB = 0x20;
     int NUMIOCB = 0x8;
     int IOCB_CMD_CLOSE = 0xc;
     int IOCB_CMD_OPEN = 0x3;
@@ -376,24 +378,36 @@ const char *defaultProgram =
         "10 OPEN #1,4,0,\"J2:\" \233"
         "20 GET #1,A  \233"
         "30 PRINT A;  \233"
-        "35 PRINT \" \"; \233"
+        "35 PRINT \"   \"; \233"
         "40 CLOSE #1  \233"
         "41 OPEN #1,8,0,\"J\" \233"
         "42 PUT #1,A + 1 \233"
         "43 CLOSE #1 \233"
         "50 A=USR(1536) \233"
+        "51 PRINT COUNT; \233"
+        "52 PRINT \" \"; \233"
+        "53 COUNT = COUNT + 1 \233"
         "70 GOTO 10 \233"
 ;
+
+vector<uint8_t> simulatedKeypressQueue;
+void addSimKeypress(const string &s) { 
+    for(auto a : s) simulatedKeypressQueue.push_back(a);
+}
 
 struct AtariIO {
     uint8_t buf[2048];
     int ptr = 0;
     int len = 0;
+    string filename;
     AtariIO() { 
         strcpy((char *)buf, defaultProgram); 
         len = strlen((char *)buf);
     }
-    void open() { ptr = 0; }
+    void open(const string &f) { 
+        ptr = 0; 
+        filename = f;
+    }
     int get() { 
         if (ptr >= len) return -1;
         return buf[ptr++];
@@ -402,6 +416,7 @@ struct AtariIO {
         if (ptr >= sizeof(buf)) return -1;
         buf[ptr++] = c;
         len = ptr;
+        if (filename == "J:KEYS") simulatedKeypressQueue.push_back(c);
         return 1;
     }
 } fakeFile; 
@@ -422,9 +437,66 @@ struct AtariDCB {
     DAUX2;
 };
 
-AtariDCB *dcb = (AtariDCB *)&atariRam[0x300];
+struct { 
+    AtariDCB *dcb = (AtariDCB *)&atariRam[0x300];
+    AtariIOCB *ziocb = (AtariIOCB *)&atariRam[0x20];
+    AtariIOCB *iocb0 = (AtariIOCB *)&atariRam[0x320];
+} atariMem;
 
-vector<AtariDCB> dcbHistory;
+template<class T> 
+struct StructLog { 
+    int maxSize;
+    StructLog(int maxS = 32) : maxSize(maxS) {}
+    vector<T> log;
+    void add(const T &t) { 
+        log.push_back(t);
+        if (log.size() > maxSize) log.erase(log.begin());
+    }
+    static void printEntry(const T&);
+    void print() { for(auto a : log) printEntry(a); }
+};
+template <class T> void StructLog<T>::printEntry(const T &a) {
+    for(int i = 0; i < sizeof(a); i++) printf("%02x ", ((uint8_t *)&a)[i]);
+    printf("\n");
+}
+template <> void StructLog<string>::printEntry(const string &a) { printf("%s\n", a.c_str()); }
+
+struct { 
+    StructLog<AtariDCB> dcb; 
+    StructLog<AtariIOCB> iocb; 
+    StructLog<AtariIOCB> ziocb; 
+    StructLog<string> opens;
+    void print() {
+        printf("DCB log:\n"); dcb.print();
+        printf("IOCB log:\n"); iocb.print();
+        printf("ZIOCB log:\n"); ziocb.print();
+        printf("opened files log:\n"); opens.print();
+    }
+} structLogs;
+
+
+
+// https://www.atarimax.com/jindroush.atari.org/afmtatr.html
+struct AtrImageHeader {
+    uint16_t magic; // 0x0296;
+    uint16_t pars;  // disk image size divided by 0x10
+    uint16_t sectorSize; // usually 0x80 or 0x100
+    uint8_t parsHigh; // high byte of larger wPars size (added in rev3.00)
+    uint32_t crc;       
+    uint32_t unused;
+    uint8_t flags;
+};
+
+struct DiskImage {
+    string hostFilename;
+    union DiskImageRawData { 
+        uint8_t data[1]; 
+        AtrImageHeader header;
+    } *image;
+};
+DiskImage atariDisks[8] = {
+    {"none", (DiskImage::DiskImageRawData *)diskImg}, 
+};
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
@@ -439,14 +511,14 @@ void IRAM_ATTR core0Loop() {
     uint8_t ledColor[3] = {0,0,0};
     uint32_t *psramPtr = psram;
     while(1) {
-        if (1) { 
+        if (0) { 
             *psramPtr = 1;
             psramPtr++;
             if (psramPtr >= psram + psram_sz / sizeof(*psramPtr)) 
                 psramPtr = psram;
         }
         uint32_t stsc;
-        if (1) {
+        if (0) {
             //rgb[0]++;
             int longCycles = 175;
             int shortCycles = 90;
@@ -499,7 +571,18 @@ void IRAM_ATTR core0Loop() {
             }
         }
 
-
+        if (0) { 
+            static uint32_t lastTsc;
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 250) {
+                lastTsc = XTHAL_GET_CCOUNT();
+                if (simulatedKeypressQueue.size() > 0) { 
+                    uint8_t c = simulatedKeypressQueue[0];
+                    simulatedKeypressQueue.erase(simulatedKeypressQueue.begin());
+                    if (c != 255) 
+                        atariRam[764] = ascii2keypress[c];
+                }
+            }
+        }
 #if 0 
         if (0 && partition != NULL) {
             // Even this doesn't work - esp_* calls usually hang even if interrupts are enabled on core0, 
@@ -560,60 +643,82 @@ void IRAM_ATTR core0Loop() {
                 uint8_t cmd;
                 uint8_t carry;
             };
-            PbiIocb *iocb = (PbiIocb *)&pbiROM[0x20];
+            PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
             static uint8_t dummyReadChar = 'A';
             
-            if (iocb->req != 0) {
+            if (pbiRequest->req != 0) {
                 ledColor[1] += 3;
                 ledColor[0] += 2;
                 ledColor[2] += 1;
-                AtariIOCB *i = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + iocb->x]; // todo validate x bounds
-                iocb->y = 1; // assume success
-                iocb->carry = 1; 
-                if (iocb->cmd == 1) { // open
-                    fakeFile.open();
-                } else if (iocb->cmd == 2) { // close
-                } else if (iocb->cmd == 3) { // get
+                AtariIOCB *iocb = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + pbiRequest->x]; // todo validate x bounds
+                pbiRequest->y = 1; // assume success
+                pbiRequest->carry = 0; // assume fail 
+                if (pbiRequest->cmd == 1) { // open
+                    uint16_t addr = ((uint16_t )atariMem.ziocb->ICBAH) << 8 | atariMem.ziocb->ICBAL;
+                    string filename;
+                    for(int i = 0; i < 32; i++) { 
+                        uint8_t ch = atariRam[addr + i];
+                        if (ch == 155) break;
+                        filename += ch;    
+                    } 
+                    structLogs.opens.add(filename);
+                    //structLogs.ziocb.add(*atariMem.ziocb);
+                    //structLogs.iocb.add(*iocb);
+                    fakeFile.open(filename);
+                    pbiRequest->carry = 1; 
+                } else if (pbiRequest->cmd == 2) { // close
+                    pbiRequest->carry = 1; 
+                } else if (pbiRequest->cmd == 3) { // get
                     int c = fakeFile.get();
                     if (c < 0) 
-                        iocb->y = 136;
+                        pbiRequest->y = 136;
                     else
-                        iocb->a = c; 
-                } else if (iocb->cmd == 4) { // put
-                    if (fakeFile.put(iocb->a) < 0)
-                        iocb->y = 136;
-                } else if (iocb->cmd == 5) { // status 
-                } else if (iocb->cmd == 6) { // special 
-                } else if (iocb->cmd == 7) { // low level io, see DCB
+                        pbiRequest->a = c; 
+                    pbiRequest->carry = 1; 
+                } else if (pbiRequest->cmd == 4) { // put
+                    if (fakeFile.put(pbiRequest->a) < 0)
+                        pbiRequest->y = 136;
+                    pbiRequest->carry = 1; 
+                } else if (pbiRequest->cmd == 5) { // status 
+                } else if (pbiRequest->cmd == 6) { // special 
+                } else if (pbiRequest->cmd == 7) { // low level io, see DCB
+//#define ENABLE_SIO
+#ifdef ENABLE_SIO
+                    AtariDCB *dcb = atariMem.dcb;
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
                     int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
-                    //dcbHistory.push_back(*dcb);
-                    //if (dcbHistory.size() > 100) dcbHistory.erase(dcbHistory.begin());
-                    iocb->carry = 0; // default to fail  
-                    if (dcb->DDEVIC == 0x31 && dcb->DUNIT == 1) {  // Device D1: 
-                        if (dcb->DCOMND == 0x53) { // SIO status command
-                            // drive status https://www.atarimax.com/jindroush.atari.org/asio.html
-                            atariRam[addr+0] = 0x00; // bit 0 = frame err, 1 = cksum err, wr err, wr prot, motor on, sect size, unused, med density  
-                            atariRam[addr+1] = 0xff; // inverted bits: busy, DRQ, data lost, crc err, record not found, head loaded, write pro, not ready 
-                            atariRam[addr+2] = 0xff; // timeout for format 
-                            atariRam[addr+3] = 0xff; // copy of wd
-                            iocb->carry = 1;
-                        }
-                        if (dcb->DCOMND== 0x52) {  // READ sector
-                            memcpy(&atariRam[addr], &diskImg[16 + (sector - 1) * 0x80], 0x80);
-                            iocb->carry = 1;
-                        }
-                        if (dcb->DCOMND== 0x50) {  // WRITE sector
-                            memcpy(&diskImg[16 + (sector - 1) * 0x80], &atariRam[addr], 0x80);
-                            iocb->carry = 1;
+                    //structLogs.dcb.add(*dcb);
+                    if (dcb->DDEVIC == 0x31 && dcb->DUNIT >= 1 && dcb->DUNIT < sizeof(atariDisks)/sizeof(atariDisks[0]) + 1) {  // Device D1:
+                        DiskImage::DiskImageRawData *disk = atariDisks[dcb->DUNIT - 1].image; 
+                        if (disk != NULL) { 
+                            int sectorSize = disk->header.sectorSize;
+                            if (dcb->DCOMND == 0x53) { // SIO status command
+                                // drive status https://www.atarimax.com/jindroush.atari.org/asio.html
+                                atariRam[addr+0] = (sectorSize == 0x100) ? 0x10 : 0x00; // bit 0 = frame err, 1 = cksum err, wr err, wr prot, motor on, sect size, unused, med density  
+                                atariRam[addr+1] = 0xff; // inverted bits: busy, DRQ, data lost, crc err, record not found, head loaded, write pro, not ready 
+                                atariRam[addr+2] = 0xff; // timeout for format 
+                                atariRam[addr+3] = 0xff; // copy of wd
+                                pbiRequest->carry = 1;
+                            }
+                            int sectorOffset = 16 + (sector - 1) * sectorSize;
+                            if (dcb->DCOMND== 0x52) {  // READ sector
+                                memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
+                                pbiRequest->carry = 1;
+                            }
+                            if (dcb->DCOMND== 0x50) {  // WRITE sector
+                                memcpy(&disk->data[sectorOffset], &atariRam[addr], sectorSize);
+                                pbiRequest->carry = 1;
+                            }
                         }
                     }
-                } else if (iocb->cmd == 8) { // IRQ
-                    iocb->carry = 0;
+#endif // #if 0 // SIO 
+                } else if (pbiRequest->cmd == 8) { // IRQ
+                    pbiRequest->carry = 0;
                 } 
-                iocb->req = 0;
+                pbiRequest->req = 0;
             }
         }
+#if 0 
         //cycleCount++;
         if (psramLoopCount != *drLoopCount) {
             void *dma_buf = dram + (dma_sz * (psramLoopCount & (dma_bufs - 1)) / sizeof(uint32_t));
@@ -639,7 +744,8 @@ void IRAM_ATTR core0Loop() {
                 //neopixelWrite(ledPin, b, b, 0);
             }
             if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
-        } 
+        }
+#endif 
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
@@ -657,10 +763,12 @@ void IRAM_ATTR core0Loop() {
                 }
             }
             if (elapsedSec == 10) { 
+                addSimKeypress("\233E.\"J\233\233\233\233\233RUN\233");
                 for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
 
+#if 0 
             if(atariRam[754] == 23) 
                 break;
             // map in cartridge 
@@ -669,6 +777,7 @@ void IRAM_ATTR core0Loop() {
                 for(int b = 0; b < 16 * 1024 / bankSize; b++)
                 banks[(0x8000 >> bankShift) + b] = &cartROM[b * bankSize]; 
             }
+#endif
 #ifdef HAVE_RESET_PIN
             //if(cumulativeResets > 2) break;
             if(currentResetValue == 0 && elapsedSec > 15) break;
@@ -897,13 +1006,7 @@ void threadFunc(void *) {
     delay(100);
     
     //ESP.restart();
-    for(auto dcb : dcbHistory) { 
-        printf("DCB: ");
-        for(int b = 0; b < sizeof(dcb); b++) { 
-            printf("%02x ", *(((uint8_t *)&dcb) + b));
-        }
-        printf("\n");
-    }
+    structLogs.print();
     printf("CORE0 idle\n");
     while(1) { 
         //printf("CORE0 idle\n");
@@ -957,6 +1060,9 @@ void setup() {
     psram = (uint32_t *) heap_caps_aligned_alloc(64, psram_sz,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
     dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     printf("psram %8p dram %8p\n", psram, dram);
+
+    atariDisks[0].image = (DiskImage::DiskImageRawData *)heap_caps_aligned_alloc(4, sizeof(diskImg),  MALLOC_CAP_SPIRAM);
+    memcpy(atariDisks[0].image, diskImg, sizeof(diskImg));
 
     uint64_t mask = 0;
     for(auto i : pins) mask |= ((uint64_t)0x1) << i;
@@ -1313,7 +1419,8 @@ void IRAM_ATTR iloop_pbi() {
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
-            if ((r0 & (casInh_Mask)) == 0) 
+            // this will be needed eventually to handle not trashing RAM under mapped ROMS
+            if ((r0 & (casInh_Mask)) == 0)  
                 ramAddr = &dummyStore;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__("nop"); 
@@ -1334,14 +1441,14 @@ void IRAM_ATTR iloop_pbi() {
                 }
             }
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
-            //ramWrites++;
         }
+#if 0
         if (0) { 
             profilers[0].add(tscFall - lastTscFall);  
             lastTscFall = tscFall;
-        } else { 
-            //profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
         }
+#endif
+        //profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
     } while(1);
 }
 
