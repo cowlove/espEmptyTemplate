@@ -214,7 +214,7 @@ static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*
     return false;
 }
 
-inline void busyWaitCCount(uint32_t cycles) { 
+void busyWaitCCount(uint32_t cycles) { 
     uint32_t tsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
 }
@@ -229,20 +229,23 @@ inline void busywait(float sec) {
 
 #pragma GCC optimize("O1") // avoid register write combining
 
-inline void simulateI2c(uint8_t pin) {
+void IRAM_ATTR simulateI2c() {
     int cycles = 240 * 1000000 / 100000 / 2;
-    for(int i = 0; i < 1; i++) { 
-        //dedic_gpio_cpu_ll_write_all(1);
-        busyWaitCCount(cycles);
-        //dedic_gpio_cpu_ll_write_all(0);
-        busyWaitCCount(cycles);
+    uint32_t tsc;
+    for(int i = 0; i < 32; i++) { 
+        dedic_gpio_cpu_ll_write_all(1);
+        tsc = XTHAL_GET_CCOUNT();
+        while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
+        dedic_gpio_cpu_ll_write_all(0);
+        tsc = XTHAL_GET_CCOUNT();
+        while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
     }
 }
 
-inline void NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
+void IRAM_ATTR NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
     //busyWaitCCount(100);
-    //return;
-
+    //return;       
+    uint32_t stsc;
     int color[3] = {green_val, red_val, blue_val};
     int longCycles = 175;
     int shortCycles = 90;
@@ -254,21 +257,26 @@ inline void NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, ui
                 // HIGH bit
                 //REG_WRITE(GPIO_OUT1_W1TS_REG, bitMask);
                 dedic_gpio_cpu_ll_write_all(1);
-                busyWaitCCount(longCycles);
+                stsc = XTHAL_GET_CCOUNT();
+                while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
+
                 dedic_gpio_cpu_ll_write_all(0);
-                busyWaitCCount(shortCycles);
+                stsc = XTHAL_GET_CCOUNT();
+                while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
             } else {
                 // LOW bit
                 dedic_gpio_cpu_ll_write_all(1);
-                busyWaitCCount(shortCycles);
+                stsc = XTHAL_GET_CCOUNT();
+                while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
+
                 dedic_gpio_cpu_ll_write_all(0);
-                busyWaitCCount(longCycles);
+                stsc = XTHAL_GET_CCOUNT();
+                while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
             }
             i++;
         }
     }
 }
-#pragma GCC pop_options
 
 //  socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
@@ -361,22 +369,25 @@ static const int numProfilers = 4;
 Hist2 profilers[numProfilers];
 int ramReads = 0, ramWrites = 0;
 
-struct AtariIO {
-    uint8_t buf[1024];
-    int ptr = 0;
-    int len = 0;
-    AtariIO() { 
-        strcpy((char *)buf, 
+const char *defaultProgram = 
         "10 OPEN #1,4,0,\"J2:\" \233"
         "20 GET #1,A  \233"
         "30 PRINT A;  \233"
         "35 PRINT \" \"; \233"
         "40 CLOSE #1  \233"
-        "50 A=USR(1536)\233"
-        "60 PRINT A;  \233"
-        "65 PRINT \" \"; \233"
+        "41 OPEN #1,8,0,\"J\" \233"
+        "42 PUT #1,A + 1 \233"
+        "43 CLOSE #1 \233"
+        "50 A=USR(1536) \233"
         "70 GOTO 10 \233"
-        );
+;
+
+struct AtariIO {
+    uint8_t buf[2048];
+    int ptr = 0;
+    int len = 0;
+    AtariIO() { 
+        strcpy((char *)buf, defaultProgram); 
         len = strlen((char *)buf);
     }
     void open() { ptr = 0; }
@@ -392,92 +403,82 @@ struct AtariIO {
     }
 } fakeFile; 
 
-void IRAM_ATTR threadFunc(void *) { 
-    printf("CORE0: threadFunc() start\n");
 
-    SPIFFSVariableESP32Base::begin();
+int maxBufsUsed = 0;
+async_memcpy_handle_t handle = NULL;
 
+// Apparently can't make any function calls from the core0 loops, even inline.  Otherwise it breaks 
+// timing on the core1 loop
+void IRAM_ATTR core0Loop() { 
     int elapsedSec = 0;
     int pi = 0;
-    pinMode(ledPin, OUTPUT);
-    digitalWrite(ledPin, 0);
-
-    if(1) { 
-        int bundleB_gpios[] = {ledPin};
-        dedic_gpio_bundle_config_t bundleB_config = {
-            .gpio_array = bundleB_gpios,
-            .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
-            .flags = {
-                .out_en = 1
-            },
-        };
-        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
-        for(int i = 0; i < sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]); i++) { 
-            //gpio_set_drive_capability((gpio_num_t)bundleB_gpios[i], GPIO_DRIVE_CAP_MAX);
-        }
-    }
-
-    NEWneopixelWrite(ledPin,25,25,25);
-    delay(100);
-    NEWneopixelWrite(ledPin,0,0,0);
-
+    uint32_t lastCycleCount, startTsc = XTHAL_GET_CCOUNT();
     volatile int *drLoopCount = &dramLoopCount;
-    async_memcpy_config_t config {
-        .backlog = dma_bufs - 2,
-        .sram_trans_align = 0,
-        .psram_trans_align = 0,
-        .flags = 0
-    };
-    async_memcpy_handle_t handle = NULL;
-
-    if (esp_async_memcpy_install(&config, &handle) != ESP_OK) {
-        printf("Failed to install async memcpy driver.\n");
-        return;
-    }
-
-    int maxBufsUsed = 0;
-    //neopixelWrite(ledPin, 0, 8, 0);
-    
-
-    const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
-    printf("partition find returned %p\n", partition);
-
-    if (1) { 
-        static uint32_t buf[256];
-        int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
-        printf("flash_read() returned %d\n", e);
-    }
-
-
-    XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
-    uint32_t oldint;
-    if (opt.maskCore0Int) { 
-        disableCore0WDT();
-        portDISABLE_INTERRUPTS();
-        _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
-        //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
-    }
-    int lastCycleCount = 0;
-    uint32_t startTsc = XTHAL_GET_CCOUNT();
-    int fakeRamErrCount = opt.forceMemTest ? 2 : 0;
-    uint8_t lastRamValue = 0;
-
- 
+    uint8_t ledColor[3] = {0,0,0};
+    uint32_t *psramPtr = psram;
     while(1) {
-        if (1) { // why does this work when simulateI2c or even busywait(1) break timing?
-            for(int i = 0; i < 32; i++) { // simulated I2c 
-                uint32_t stsc;
-                dedic_gpio_cpu_ll_write_all(0);
-                stsc = XTHAL_GET_CCOUNT();
-                while(XTHAL_GET_CCOUNT() - stsc < 2400) {}
-                dedic_gpio_cpu_ll_write_all(1);
-                stsc = XTHAL_GET_CCOUNT();
-                while(XTHAL_GET_CCOUNT() - stsc < 2400) {}
+        if (1) { 
+            *psramPtr = 1;
+            psramPtr++;
+            if (psramPtr >= psram + psram_sz / sizeof(*psramPtr)) 
+                psramPtr = psram;
+        }
+        uint32_t stsc;
+        if (1) {
+            //rgb[0]++;
+            int longCycles = 175;
+            int shortCycles = 90;
+            uint32_t bitMask = 1 << (ledPin - 32); 
+            for (int col = 0; col < 3; col++) {
+                for (int bit = 0; bit < 8; bit++) {
+                    if (((ledColor[col] >> 2)& (1 << (7 - bit)))) {
+                        // HIGH bit
+                        //REG_WRITE(GPIO_OUT1_W1TS_REG, bitMask);
+                        dedic_gpio_cpu_ll_write_all(1);
+                        stsc = XTHAL_GET_CCOUNT();
+                        while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
+
+                        dedic_gpio_cpu_ll_write_all(0);
+                        stsc = XTHAL_GET_CCOUNT();
+                        while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
+                    } else {
+                        // LOW bit
+                        dedic_gpio_cpu_ll_write_all(1);
+                        stsc = XTHAL_GET_CCOUNT();
+                        while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
+
+                        dedic_gpio_cpu_ll_write_all(0);
+                        stsc = XTHAL_GET_CCOUNT();
+                        while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
+                    }
+                }
             }
         }
-        //NEWneopixelWrite(ledPin, 0, 0, 0);
-        //simulateI2c(ledPin);
+        if (1) { 
+            stsc = XTHAL_GET_CCOUNT();
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
+        }
+
+        if (0) { 
+            // why does this work when simulateI2c or even busywait(1) break timing?
+            if (1) {
+                int cycles = 240 * 1000000 / 100000 / 2;
+                uint32_t tsc;
+                for(int i = 0; i < 32; i++) { 
+                    dedic_gpio_cpu_ll_write_all(1);
+                    tsc = XTHAL_GET_CCOUNT();
+                    while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
+                    dedic_gpio_cpu_ll_write_all(0);
+                    tsc = XTHAL_GET_CCOUNT();
+                    while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
+                }
+            } else { 
+                simulateI2c();
+            }
+        }
+
+
+#if 0 
         if (0 && partition != NULL) {
             // Even this doesn't work - esp_* calls usually hang even if interrupts are enabled on core0, 
             // presumably because it tries to synch with core1.   Try compiling lib_idf to completely ignore core1 
@@ -507,11 +508,12 @@ void IRAM_ATTR threadFunc(void *) {
             int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
             //printf("flash_read() returned %d\n", e);
         }
+
         if (fakeRamErrCount > 0 && atariRam[1666] == 0) { 
             fakeRamErrCount--;
             atariRam[1666] = 1;
         }
-
+#endif
         if (0) { // why does this do-nothing loop smear out core1 timings?  
             static uint32_t *p = 0;
             //*p = 0;
@@ -539,6 +541,9 @@ void IRAM_ATTR threadFunc(void *) {
             static uint8_t dummyReadChar = 'A';
             
             if (iocb->req != 0) {
+                ledColor[1] += 3;
+                ledColor[0] += 2;
+                ledColor[2] += 1;
                 AtariIOCB *i = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + iocb->x]; // todo validate x bounds
                 iocb->y = 1; // assume success 
                 if (iocb->cmd == 1) { // open
@@ -620,6 +625,78 @@ void IRAM_ATTR threadFunc(void *) {
 #endif
         }
     }
+}
+
+
+#pragma GCC pop_options
+
+void threadFunc(void *) { 
+    printf("CORE0: threadFunc() start\n");
+
+    SPIFFSVariableESP32Base::begin();
+
+    pinMode(ledPin, OUTPUT);
+    digitalWrite(ledPin, 0);
+
+    if(1) { 
+        int bundleB_gpios[] = {ledPin};
+        dedic_gpio_bundle_config_t bundleB_config = {
+            .gpio_array = bundleB_gpios,
+            .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
+            .flags = {
+                .out_en = 1
+            },
+        };
+        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
+        for(int i = 0; i < sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]); i++) { 
+            //gpio_set_drive_capability((gpio_num_t)bundleB_gpios[i], GPIO_DRIVE_CAP_MAX);
+        }
+    }
+
+    NEWneopixelWrite(ledPin,25,25,25);
+    delay(100);
+    NEWneopixelWrite(ledPin,0,0,0);
+
+    volatile int *drLoopCount = &dramLoopCount;
+    async_memcpy_config_t config {
+        .backlog = dma_bufs - 2,
+        .sram_trans_align = 0,
+        .psram_trans_align = 0,
+        .flags = 0
+    };
+
+    if (esp_async_memcpy_install(&config, &handle) != ESP_OK) {
+        printf("Failed to install async memcpy driver.\n");
+        return;
+    }
+
+    //neopixelWrite(ledPin, 0, 8, 0);
+
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+    printf("partition find returned %p\n", partition);
+
+    if (1) { 
+        static uint32_t buf[256];
+        int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
+        printf("flash_read() returned %d\n", e);
+    }
+
+
+    XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
+    uint32_t oldint;
+    if (opt.maskCore0Int) { 
+        disableCore0WDT();
+        portDISABLE_INTERRUPTS();
+        _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
+        //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
+    }
+    int lastCycleCount = 0;
+    uint32_t startTsc = XTHAL_GET_CCOUNT();
+    int fakeRamErrCount = opt.forceMemTest ? 2 : 0;
+    uint8_t lastRamValue = 0;
+
+    core0Loop();
 
     stop = true;
     int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
