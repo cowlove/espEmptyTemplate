@@ -376,17 +376,23 @@ int ramReads = 0, ramWrites = 0;
 const char *defaultProgram = 
         "10 OPEN #1,4,0,\"J2:\" \233"
         "20 GET #1,A  \233"
-        "30 PRINT A;  \233"
-        "35 PRINT \"   \"; \233"
+        "30 PRINT \"   \"; \233"
+        "35 PRINT A;  \233"
         "40 CLOSE #1  \233"
         "41 OPEN #1,8,0,\"J\" \233"
         "42 PUT #1,A + 1 \233"
         "43 CLOSE #1 \233"
         "50 A=USR(1536) \233"
-        "51 PRINT COUNT; \233"
-        "52 PRINT \" \"; \233"
+        "51 PRINT \" >>> \"; \233"
+        "52 PRINT COUNT; \233"
         "53 COUNT = COUNT + 1 \233"
-        "70 GOTO 10 \233"
+        "54 OPEN #1,4,0,\"D1:X32Z.DOS\" \233"
+        "55 POINT #1,SEC,BYT \233"
+        "56 GET #1,A \233"
+        "57 CLOSE #1 \233"
+        "58 SEC = SEC + 1 \233"
+        "59 IF SEC > 100 THEN SEC = 0 \233"
+        "70 GOTO 10 \233";
 ;
 
 vector<uint8_t> simulatedKeypressQueue;
@@ -398,6 +404,7 @@ int simulatedKeysAvailable = 0;
 // CORE0 loop options 
 #define ENABLE_SIO
 #define SIM_KEYPRESS
+#define SIM_KEYPRESS_FILE
 
 struct AtariIO {
     uint8_t buf[2048];
@@ -584,7 +591,7 @@ void IRAM_ATTR core0Loop() {
         if (1) { 
             // Stuff some fake PBI commands to exercise code in the core0 loop during timing tests 
             static uint32_t lastTsc;
-            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 50) {
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 20) {
                 lastTsc = XTHAL_GET_CCOUNT();
                 volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
                 static int step = 0;
@@ -1137,7 +1144,7 @@ void setup() {
     dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     printf("psram %8p dram %8p\n", psram, dram);
 
-#if 1 // try putting disk image in PSRAM
+#if 0 // try putting disk image in PSRAM
     atariDisks[0].image = (DiskImage::DiskImageRawData *)heap_caps_aligned_alloc(4, sizeof(diskImg),  MALLOC_CAP_SPIRAM);
     memcpy(atariDisks[0].image, diskImg, sizeof(diskImg));
 #endif
