@@ -1464,14 +1464,16 @@ void IRAM_ATTR iloop_pbi() {
 
     //uint32_t gpio1OutClearMask = 0;
     //uint32_t gpio1OutSetMask = mpdMask | extSel_Mask;
+    uint8_t currentD1FF = 0;
 
-    int mpdActive = 0; // if this is bool the compiler does some WEIRD stuff with timing(?) 
+    //int mpdActive = 0; // if this is bool the compiler does some WEIRD stuff with timing(?) 
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}                      // wait falling clock edge
         if (stop) break; // provides a needed 3-cycle delay 
         uint32_t tscFall = XTHAL_GET_CCOUNT();
 
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);            
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
+        int mpdActive = (currentD1FF == 1);            
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
 
@@ -1508,7 +1510,8 @@ void IRAM_ATTR iloop_pbi() {
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
             if (addr == 0xd1ff) {
-                mpdActive = (data == 1);
+                //mpdActive = (data == 1);
+                currentD1FF = data;
             }
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }

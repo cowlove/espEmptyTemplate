@@ -1,3 +1,17 @@
+Deferred calculation of (currentD1FF == 1) until the next read cycle, hidden in the 
+shadow of a register write delay
+
+ 100     2043        0        0        0  HIST
+ 101  6268498        0        0        0  HIST
+ 102  2261167        0        0        0  HIST
+ 103   381367        0        0        0  HIST
+ 104      127        0        0        0  HIST
+ 105       57        0        0        0  HIST
+ 106        1        0        0        0  HIST
+
+
+
+
 Looking for best place to put if (stop) break.  Going with option B
 option a: line 1482 between REG_WRITEs 
 99  1798740        0        0        0  HIST
