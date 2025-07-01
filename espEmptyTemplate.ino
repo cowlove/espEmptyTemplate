@@ -49,10 +49,10 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-//#define FAKE_CLOCK
+#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; // XOPTS
-   float histRunSec   = 20;
+   float histRunSec   = 120;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -20;
@@ -392,8 +392,12 @@ vector<uint8_t> simulatedKeypressQueue;
 void addSimKeypress(const string &s) { 
     for(auto a : s) simulatedKeypressQueue.push_back(a);
 }
+int simulatedKeysAvailable = 0;
 
-//#define SIM_KEYPRESS
+// CORE0 loop options 
+#define ENABLE_SIO
+#define SIM_KEYPRESS
+
 struct AtariIO {
     uint8_t buf[2048];
     int ptr = 0;
@@ -402,7 +406,8 @@ struct AtariIO {
         strcpy((char *)buf, defaultProgram); 
         len = strlen((char *)buf);
     }
-#ifdef SIM_KEYPRESS
+#ifdef SIM_KEYPRESS_FILE
+
     string filename;
     void open(const string &f) { 
         filename = f;
@@ -420,7 +425,7 @@ struct AtariIO {
         if (ptr >= sizeof(buf)) return -1;
         buf[ptr++] = c;
         len = ptr;
-#ifdef SIM_KEYPRESS
+#ifdef SIM_KEYPRESS_FILE
         if (filename == "J:KEYS") simulatedKeypressQueue.push_back(c);
 #endif
         return 1;
@@ -515,6 +520,7 @@ DiskImage atariDisks[8] = {
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
+int diskReadCount = 0;
 
 #define USE_PRAGMA
 #ifdef USE_PRAGMA
@@ -574,16 +580,17 @@ void IRAM_ATTR core0Loop() {
         }
 
 #ifdef FAKE_CLOCK
-        if (0) { 
-            // STUFF some fake PBI commands to exercise code in the core0 loop during timing tests 
+        if (1) { 
+            // Stuff some fake PBI commands to exercise code in the core0 loop during timing tests 
             static uint32_t lastTsc;
-            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 100) {
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 50) {
+                lastTsc = XTHAL_GET_CCOUNT();
                 volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
                 static int step = 0;
                 if (step == 1) { 
                     // stuff a fake CIO put request
-                    #ifdef SIM_KEYPRESS
-                    fakeFile.filename = "J:KEYS"
+                    #ifdef SIM_KEYPRESS_FILE
+                    fakeFile.filename = "J:KEYS";
                     #endif 
                     pbiRequest->cmd = 4; // put 
                     pbiRequest->a = ' ';
@@ -591,9 +598,12 @@ void IRAM_ATTR core0Loop() {
                 } else if (step == 2) { 
                     // stuff a fake SIO sector read request 
                     volatile AtariDCB *dcb = atariMem.dcb;
-                    dcb->DBUFHI = dcb->DBUFLO = 0;
-                    dcb->DDEVIC = 0x31; dcb->DUNIT = 1;
-                    dcb->DAUX1 = 1; dcb->DAUX2 = 0;
+                    dcb->DBUFHI = 0x40;
+                    dcb->DBUFLO = 0x00;
+                    dcb->DDEVIC = 0x31; 
+                    dcb->DUNIT = 1;
+                    dcb->DAUX1++; 
+                    dcb->DAUX2 = 0;
                     dcb->DCOMND = 0x52;
                     pbiRequest->cmd = 7; // read a sector 
                     pbiRequest->req = 1;
@@ -622,18 +632,23 @@ void IRAM_ATTR core0Loop() {
             }
         }
 
-        if (0) { 
+#ifdef SIM_KEYPRESS
+        if (1) { 
             static uint32_t lastTsc;
-            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 250) {
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 200) {
                 lastTsc = XTHAL_GET_CCOUNT();
-                if (simulatedKeypressQueue.size() > 0) { 
-                    uint8_t c = simulatedKeypressQueue[0];
-                    simulatedKeypressQueue.erase(simulatedKeypressQueue.begin());
-                    if (c != 255) 
-                        atariRam[764] = ascii2keypress[c];
+                if (simulatedKeysAvailable) { 
+                    if (simulatedKeypressQueue.size() > 0) { 
+                        uint8_t c = simulatedKeypressQueue[0];
+                        simulatedKeypressQueue.erase(simulatedKeypressQueue.begin());
+                        if (c != 255) 
+                            atariRam[764] = ascii2keypress[c];
+                    }
+                    simulatedKeysAvailable = simulatedKeypressQueue.size() > 0;
                 }
             }
         }
+#endif
 #if 0 
         if (0 && partition != NULL) {
             // Even this doesn't work - esp_* calls usually hang even if interrupts are enabled on core0, 
@@ -685,9 +700,8 @@ void IRAM_ATTR core0Loop() {
             if (p >= psram + psram_sz / sizeof(uint32_t))
                 p = psram;
         }
-        if (1) { // stubbed out dummy IO to PBI device 
+        if (1) {  
             volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
-            static uint8_t dummyReadChar = 'A';
             
             if (pbiRequest->req != 0) {
                 ledColor[1] += 3;
@@ -698,7 +712,7 @@ void IRAM_ATTR core0Loop() {
                 pbiRequest->carry = 0; // assume fail 
                 if (pbiRequest->cmd == 1) { // open
                     uint16_t addr = ((uint16_t )atariMem.ziocb->ICBAH) << 8 | atariMem.ziocb->ICBAL;
-#ifdef SIM_KEYPRESS
+#ifdef SIM_KEYPRESS_FILE
                     string filename;
                     for(int i = 0; i < 32; i++) { 
                         uint8_t ch = atariRam[addr + i];
@@ -729,7 +743,6 @@ void IRAM_ATTR core0Loop() {
                 } else if (pbiRequest->cmd == 5) { // status 
                 } else if (pbiRequest->cmd == 6) { // special 
                 } else if (pbiRequest->cmd == 7) { // low level io, see DCB
-//#define ENABLE_SIO
 #ifdef ENABLE_SIO
                     volatile AtariDCB *dcb = atariMem.dcb;
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
@@ -749,16 +762,21 @@ void IRAM_ATTR core0Loop() {
                             }
                             int sectorOffset = 16 + (sector - 1) * sectorSize;
                             if (dcb->DCOMND== 0x52) {  // READ sector
-                                memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
+                                for(int n = 0; n < sectorSize; n++) 
+                                    atariRam[addr + n] = disk->data[sectorOffset + n];
+                                //memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
                                 pbiRequest->carry = 1;
+                                diskReadCount++;
                             }
                             if (dcb->DCOMND== 0x50) {  // WRITE sector
-                                memcpy(&disk->data[sectorOffset], &atariRam[addr], sectorSize);
+                                for(int n = 0; n < sectorSize; n++) 
+                                    disk->data[sectorOffset + n] = atariRam[addr + n];
+                                //memcpy(&disk->data[sectorOffset], &atariRam[addr], sectorSize);
                                 pbiRequest->carry = 1;
                             }
                         }
                     }
-#endif // #if 0 // SIO 
+#endif // ENABLE_SIO 
                 } else if (pbiRequest->cmd == 8) { // IRQ
                     pbiRequest->carry = 0;
                 } 
@@ -810,19 +828,19 @@ void IRAM_ATTR core0Loop() {
                     NEWneopixelWrite(ledPin, 22, 0, 0);
                 }
             }
-            if (elapsedSec == 10) { 
-                addSimKeypress("\233E.\"J\233\233\233\233\233RUN\233");
-                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
-            }
 #endif
+            if (elapsedSec == 10) { 
+                addSimKeypress("   \233E.\"J\233          \233RUN\233");
+                simulatedKeysAvailable = 1;
+                //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
+            }
             if (elapsedSec == 5) { 
                 for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
+            if(atariRam[754] == 23) break;
 
 #if 0 
-            if(atariRam[754] == 23) 
-                break;
             // map in cartridge 
             if(atariRam[1666] == 100 && atariRam[1667] == 93) {
                 break;
@@ -1054,6 +1072,7 @@ void threadFunc(void *) {
     printf("atariRam[754] = %d\n", atariRam[754]);
     printf("pbiROM[0x100] = %d\n", pbiROM[0x100]);
     printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
+    printf("diskIoCount %d\n", diskReadCount);
     
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
@@ -1114,7 +1133,7 @@ void setup() {
     dram = (uint32_t *)heap_caps_aligned_alloc(64, dram_sz, MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     printf("psram %8p dram %8p\n", psram, dram);
 
-#if 0 // try putting disk image in PSRAM
+#if 1 // try putting disk image in PSRAM
     atariDisks[0].image = (DiskImage::DiskImageRawData *)heap_caps_aligned_alloc(4, sizeof(diskImg),  MALLOC_CAP_SPIRAM);
     memcpy(atariDisks[0].image, diskImg, sizeof(diskImg));
 #endif
@@ -1480,6 +1499,7 @@ void IRAM_ATTR iloop_pbi() {
             if ((r0 & (casInh_Mask)) == 0)  
                 ramAddr = &dummyStore;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+            __asm__("nop"); 
             __asm__("nop"); 
             __asm__("nop"); 
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;

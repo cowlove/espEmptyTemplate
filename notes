@@ -1,3 +1,38 @@
+Test loads now include artificial keychars and disk IO for core0 loop,
+spreading them out a bit:  It really seems to be ANY function call
+from core0 loop screws up core1 timings, even things like vector::size()
+or memcpy()
+
+22.30 lastAddr ffffffff cb 0 late 0 lateIndex -1 lateMin 9999 lateMax 0 lateTsc 00000000 0 minLoop 0 maxLoop 0 jit 0 late -1515870811
+ 89      217        0        0        0  HIST
+ 90      683        0        0        0  HIST
+ 91      126        0        0        0  HIST
+ 92       56        0        0        0  HIST
+ 93      179        0        0        0  HIST
+ 94      170        0        0        0  HIST
+ 95       19        0        0        0  HIST
+ 96       41        0        0        0  HIST
+ 97       45        0        0        0  HIST
+ 98      337        0        0        0  HIST
+ 99  10808393        0        0        0  HIST
+ 100  27337795        0        0        0  HIST
+ 101  27603256        0        0        0  HIST
+ 102  22218455        0        0        0  HIST
+ 103  52497157        0        0        0  HIST
+ 104  31511397        0        0        0  HIST
+ 105  19150778        0        0        0  HIST
+ 106    13136        0        0        0  HIST
+ 107    31241        0        0        0  HIST
+ 108     1299        0        0        0  HIST
+ 109     1497        0        0        0  HIST
+ 110  16092865        0        0        0  HIST
+ 111  1627770        0        0        0  HIST
+ 112       51        0        0        0  HIST
+channel 0: range  89 -112, jitter  23
+
+
+
+
 Added cowcatcher rising edge in read, seemed to tighten up timing
 98        0        0        0        0  HIST
  99      458        0        0        0  HIST
