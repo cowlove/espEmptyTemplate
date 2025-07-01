@@ -52,7 +52,7 @@ static const struct {
 //#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1;
-   float histRunSec   = 20;
+   float histRunSec   = 120;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -20;
@@ -780,6 +780,9 @@ void IRAM_ATTR core0Loop() {
                 for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
 #endif
+            if (elapsedSec == 5) { 
+                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
+            }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
 
 #if 0 
@@ -1390,11 +1393,7 @@ void IRAM_ATTR iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
     };
-    uint8_t dummyStore;
-    uint32_t tscStart = XTHAL_GET_CCOUNT();
-
-    bool recentReset = false;
-    uint32_t lastResetLow = 0;
+    static uint8_t dummyStore;
 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {};                      // wait falling clock edge
@@ -1404,16 +1403,17 @@ void IRAM_ATTR iloop_pbi() {
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
-    uint32_t gpio1OutClearMask = 0;
-    uint32_t gpio1OutSetMask = mpdMask | extSel_Mask;
+    //uint32_t gpio1OutClearMask = 0;
+    //uint32_t gpio1OutSetMask = mpdMask | extSel_Mask;
 
+    int mpdActive = 0; // if this is bool the compiler does some WEIRD stuff with timing(?) 
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}                      // wait falling clock edge
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         __asm__("nop");
         __asm__("nop");
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);            
-        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | gpio1OutClearMask);
+        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
 
         uint16_t addr = (r0 & addrMask) >> addrShift;
@@ -1423,15 +1423,23 @@ void IRAM_ATTR iloop_pbi() {
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
             if ((r0 & (casInh_Mask)) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
-                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | gpio1OutSetMask);
- 
+                REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift)); 
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
-                //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
             } else {
                 // ~80 cycles intermittently available here to do misc infrequent work 
             }
             if (stop) break;
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
+#if 1 
+            if (mpdActive == true) { 
+                REG_WRITE(GPIO_OUT1_W1TC_REG, mpdMask);
+                banks[0xd800 >> bankShift] = &pbiROM[0];
+            } else {
+                REG_WRITE(GPIO_OUT1_W1TS_REG, mpdMask); 
+                banks[0xd800 >> bankShift] = &atariRam[0xd800];
+            }
+#endif
+            //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
+            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
             // this will be needed eventually to handle not trashing RAM under mapped ROMS
@@ -1443,6 +1451,8 @@ void IRAM_ATTR iloop_pbi() {
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
             if (addr == 0xd1ff) {
+                mpdActive = (data == 1);
+#if 0 
                 if (data == 1) { 
                     //REG_WRITE(GPIO_OUT1_W1TC_REG, mpdMask);
                     gpio1OutClearMask = mpdMask;
@@ -1454,6 +1464,7 @@ void IRAM_ATTR iloop_pbi() {
                     gpio1OutSetMask = extSel_Mask | mpdMask; 
                     banks[0xd800 >> bankShift] = &atariRam[0xd800];
                 }
+#endif
             }
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }

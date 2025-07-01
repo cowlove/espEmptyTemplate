@@ -1,3 +1,27 @@
+Just finished debugging PBI error 130.   Balanced the READ/WRITE
+portions of the core1 loop a little bit.  Timings now:
+99        0        0        0        0  HIST
+ 100     5557        0        0        0  HIST
+ 101  38545790        0        0        0  HIST
+ 102   577222        0        0        0  HIST
+ 103  64687361        0        0        0  HIST
+ 104      302        0        0        0  HIST
+ 105      805        0        0        0  HIST
+ 106  58168302        0        0        0  HIST
+ 107    49158        0        0        0  HIST
+ 108  46824042        0        0        0  HIST
+ 109      843        0        0        0  HIST
+ 110        1        0        0        0  HIST
+ 111      749        0        0        0  HIST
+ 112        0        0        0        0  HIST
+ 113        0        0        0        0  HIST
+ 114        0        0        0        0  HIST
+ 115        0        0        0        0  HIST
+ 116        0        0        0        0  HIST
+ 117        8        0        0        0  HIST
+
+
+
 Experimenting with accessing PSRAM/flash from core0.   
 1) PSRAM works with interrupts disabled, but smears out core1 timings about 10 ticks
 
