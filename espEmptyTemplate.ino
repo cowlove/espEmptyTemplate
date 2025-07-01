@@ -49,7 +49,7 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-// XOPTS    
+//XOPTS    
 //#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -326,7 +326,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
 }
 
 struct Hist2 { 
-    static const int maxBucket = 256; // must be power of 2
+    static const int maxBucket = 512; // must be power of 2
     int buckets[maxBucket];
     inline void add(uint32_t x) { buckets[x & (maxBucket - 1)]++; }
     Hist2() { clear(); }
@@ -545,6 +545,10 @@ void IRAM_ATTR core0Loop() {
     uint8_t ledColor[3] = {0,0,0};
     uint32_t *psramPtr = psram;
     while(1) {
+
+        if (0) {
+            memcpy(psram, atariRam, sizeof(atariRam));
+        }
         if (0) { 
             *psramPtr = 1;
             psramPtr++;
