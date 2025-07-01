@@ -54,7 +54,7 @@ static const struct {
    float histRunSec   = 20;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = -120;
+   float histRunSec   = -20;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -63,7 +63,7 @@ static const struct {
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
    bool dumpPsram     = 0;
-   bool forceMemTest  = 1;
+   bool forceMemTest  = 0;
 #define PBI_DEVICE
 #ifdef PBI_DEVICE
    bool logicAnalyzer = 0;
@@ -141,6 +141,9 @@ DRAM_ATTR uint8_t cartROM[] = {
 DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
 #include "pbirom.h"
 };
+DRAM_ATTR uint8_t diskImg[] = {
+#include "disk.h"
+};
 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
@@ -177,7 +180,7 @@ volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 int psram_sz = 7.8 * 1024 * 1024;
 uint32_t *psram;
 static const int dma_sz = 4096 - 64;
-static const int dma_bufs = 16; // must be power of 2
+static const int dma_bufs = 2; // must be power of 2
 static const int dram_sz = dma_sz * dma_bufs;
 
 uint32_t *dram;
@@ -403,6 +406,25 @@ struct AtariIO {
     }
 } fakeFile; 
 
+struct AtariDCB { 
+   uint8_t 
+    DDEVIC,
+    DUNIT,
+    DCOMND,
+    DSTATS,
+    DBUFLO,
+    DBUFHI,
+    DTIMLO,
+    DUNUSED,
+    DBYTLO,
+    DBYTHI,
+    DAUX1,
+    DAUX2;
+};
+
+AtariDCB *dcb = (AtariDCB *)&atariRam[0x300];
+
+vector<AtariDCB> dcbHistory;
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
@@ -563,7 +585,29 @@ void IRAM_ATTR core0Loop() {
                 } else if (iocb->cmd == 5) { // status 
                 } else if (iocb->cmd == 6) { // special 
                 } else if (iocb->cmd == 7) { // low level io, see DCB
-                    iocb->carry = 0; 
+                    uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
+                    int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
+                    dcbHistory.push_back(*dcb);
+                    if (dcbHistory.size() > 100) dcbHistory.erase(dcbHistory.begin());
+                    iocb->carry = 0; // default to fail  
+                    if (dcb->DDEVIC == 0x31) {  // Device D1: 
+                        if (dcb->DCOMND == 0x53) { // SIO status command
+                            // drive status https://www.atarimax.com/jindroush.atari.org/asio.html
+                            atariRam[addr+0] = 0x00; // bit 0 = frame err, 1 = cksum err, wr err, wr prot, motor on, sect size, unused, med density  
+                            atariRam[addr+1] = 0xff; // inverted bits: busy, DRQ, data lost, crc err, record not found, head loaded, write pro, not ready 
+                            atariRam[addr+2] = 0xff; // timeout for format 
+                            atariRam[addr+3] = 0xff; // copy of wd
+                            iocb->carry = 1;
+                        }
+                        if (dcb->DCOMND== 0x52) {  // READ sector
+                            memcpy(&atariRam[addr], &diskImg[16 + (sector - 1) * 0x80], 0x80);
+                            iocb->carry = 1;
+                        }
+                        if (dcb->DCOMND== 0x50) {  // WRITE sector
+                            memcpy(&diskImg[16 + (sector - 1) * 0x80], &atariRam[addr], 0x80);
+                            iocb->carry = 1;
+                        }
+                    }
                 } else if (iocb->cmd == 8) { // IRQ
                     iocb->carry = 0;
                 } 
@@ -853,6 +897,13 @@ void threadFunc(void *) {
     delay(100);
     
     //ESP.restart();
+    for(auto dcb : dcbHistory) { 
+        printf("DCB: ");
+        for(int b = 0; b < sizeof(dcb); b++) { 
+            printf("%02x ", *(((uint8_t *)&dcb) + b));
+        }
+        printf("\n");
+    }
     printf("CORE0 idle\n");
     while(1) { 
         //printf("CORE0 idle\n");
