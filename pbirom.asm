@@ -44,6 +44,8 @@ ESP32_IOCB_X
     .byt $0     ;  X -  
 ESP32_IOCB_Y
     .byt $0     ;  Y -  
+ESP32_IOCB_CMD
+    .byt $0     ;  CMD 
 
 PBI_INIT
     nop
@@ -93,18 +95,37 @@ PBI_ISR
     clc
     rts
 
-PBI_OPEN
-// check IOCBCHIDZ see if this is for us
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; IO ROUTINES 
 
+
+
+PBI_OPEN
+// check IOCBCHIDZ see if this is for us
+    sta ESP32_IOCB_A
+    lda #1 
+    JMP PBI_ALL
 PBI_CLOSE
+    sta ESP32_IOCB_A
+    lda #2 // cmd close
+    JMP PBI_ALL
 PBI_GETB
+    sta ESP32_IOCB_A
+    lda #3 // cmd close
+    JMP PBI_ALL
 PBI_PUTB
+    sta ESP32_IOCB_A
+    lda #4 // cmd close
+    JMP PBI_ALL
 PBI_STATUS
+    sta ESP32_IOCB_A
+    lda #5 // cmd close
+    JMP PBI_ALL
 PBI_SPECIAL
     sta ESP32_IOCB_A
+    lda #6 // cmd close
+PBI_ALL
+    sta ESP32_IOCB_CMD
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y
     lda #1

@@ -327,26 +327,27 @@ struct Hist2 {
     void clear() { bzero(buckets, sizeof(buckets)); }
 };
 
-struct AtariIOCB { 
-uint8_t ICHID,
-        ICDNO,  // Device number
-        ICCOM,  // Command byte 
-        ICSTA,  // Status returned
-        ICBAL,  // Buffer address (points to 0x9b-terminated string for open command)
-        ICBAH,
-        ICPTL,  // Address of driver put routine
-        ICPTH,
-        ICBLL,  // Buffer length 
-        ICBLH,
-        ICAX1,
-        ICAX2,
-        ICAX3,
-        ICAX4,
-        ICAX5,
-        ICAX6;
-};
 
-const struct {
+    struct AtariIOCB { 
+    uint8_t ICHID,
+            ICDNO,  // Device number
+            ICCOM,  // Command byte 
+            ICSTA,  // Status returned
+            ICBAL,  // Buffer address (points to 0x9b-terminated string for open command)
+            ICBAH,
+            ICPTL,  // Address of driver put routine
+            ICPTH,
+            ICBLL,  // Buffer length 
+            ICBLH,
+            ICAX1,
+            ICAX2,
+            ICAX3,
+            ICAX4,
+            ICAX5,
+            ICAX6;
+    };
+
+const struct AtariDefStruct {
     int IOCB0 = 0x340;
     int NUMIOCB = 0x8;
     int IOCB_CMD_CLOSE = 0xc;
@@ -359,6 +360,37 @@ const struct {
 static const int numProfilers = 4;
 Hist2 profilers[numProfilers];
 int ramReads = 0, ramWrites = 0;
+
+struct AtariIO {
+    uint8_t buf[1024];
+    int ptr = 0;
+    int len = 0;
+    AtariIO() { 
+        strcpy((char *)buf, 
+        "10 OPEN #1,4,0,\"J2:\" \233"
+        "20 GET #1,A  \233"
+        "30 PRINT A;  \233"
+        "35 PRINT \" \"; \233"
+        "40 CLOSE #1  \233"
+        "50 A=USR(1536)\233"
+        "60 PRINT A;  \233"
+        "65 PRINT \" \"; \233"
+        "70 GOTO 10 \233"
+        );
+        len = strlen((char *)buf);
+    }
+    void open() { ptr = 0; }
+    int get() { 
+        if (ptr >= len) return -1;
+        return buf[ptr++];
+    }
+    int put(uint8_t c) { 
+        if (ptr >= sizeof(buf)) return -1;
+        buf[ptr++] = c;
+        len = ptr;
+        return 1;
+    }
+} fakeFile; 
 
 void IRAM_ATTR threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
@@ -501,13 +533,29 @@ void IRAM_ATTR threadFunc(void *) {
                 uint8_t a;
                 uint8_t x;
                 uint8_t y;
+                uint8_t cmd;
             };
             PbiIocb *iocb = (PbiIocb *)&pbiROM[0x20];
             static uint8_t dummyReadChar = 'A';
             
             if (iocb->req != 0) {
-                iocb->a = dummyReadChar++;
-                iocb->y = 1;
+                AtariIOCB *i = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + iocb->x]; // todo validate x bounds
+                iocb->y = 1; // assume success 
+                if (iocb->cmd == 1) { // open
+                    fakeFile.open();
+                } else if (iocb->cmd == 2) { // close
+                } else if (iocb->cmd == 3) { // get
+                    int c = fakeFile.get();
+                    if (c < 0) 
+                        iocb->y = 136;
+                    else
+                        iocb->a = c; 
+                } else if (iocb->cmd == 4) { // put
+                    if (fakeFile.put(iocb->a) < 0)
+                        iocb->y = 136;
+                } else if (iocb->cmd == 5) { // status 
+                } else if (iocb->cmd == 6) { // special 
+                } 
                 iocb->req = 0;
             }
         }
