@@ -536,6 +536,7 @@ void IRAM_ATTR core0Loop() {
                 uint8_t x;
                 uint8_t y;
                 uint8_t cmd;
+                uint8_t carry;
             };
             PbiIocb *iocb = (PbiIocb *)&pbiROM[0x20];
             static uint8_t dummyReadChar = 'A';
@@ -545,7 +546,8 @@ void IRAM_ATTR core0Loop() {
                 ledColor[0] += 2;
                 ledColor[2] += 1;
                 AtariIOCB *i = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + iocb->x]; // todo validate x bounds
-                iocb->y = 1; // assume success 
+                iocb->y = 1; // assume success
+                iocb->carry = 1; 
                 if (iocb->cmd == 1) { // open
                     fakeFile.open();
                 } else if (iocb->cmd == 2) { // close
@@ -560,6 +562,10 @@ void IRAM_ATTR core0Loop() {
                         iocb->y = 136;
                 } else if (iocb->cmd == 5) { // status 
                 } else if (iocb->cmd == 6) { // special 
+                } else if (iocb->cmd == 7) { // low level io, see DCB
+                    iocb->carry = 0; 
+                } else if (iocb->cmd == 8) { // IRQ
+                    iocb->carry = 0;
                 } 
                 iocb->req = 0;
             }

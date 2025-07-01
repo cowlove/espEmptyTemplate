@@ -46,6 +46,8 @@ ESP32_IOCB_Y
     .byt $0     ;  Y -  
 ESP32_IOCB_CMD
     .byt $0     ;  CMD 
+ESP32_IOCB_CARRY
+    .byt $0
 
 PBI_INIT
     nop
@@ -90,15 +92,21 @@ L1
     bpl L1
     rts
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; SIO ROUTINES 
+
 PBI_IO
+    sta ESP32_IOCB_A
+    lda #7
+    jmp PBI_ALL
+
 PBI_ISR     
-    clc
-    rts
+    sta ESP32_IOCB_A
+    lda #8
+    jmp PBI_ALL
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; IO ROUTINES 
-
-
+;; CIO ROUTINES 
 
 PBI_OPEN
 // check IOCBCHIDZ see if this is for us
@@ -133,12 +141,11 @@ PBI_ALL
 PBI_WAITREQ
     lda ESP32_IOCB_REQ
     bne PBI_WAITREQ
-
+    lda ESP32_IOCB_CARRY
+    ror  
     lda ESP32_IOCB_A
     ldx ESP32_IOCB_X
     ldy ESP32_IOCB_Y
-
-    sec      //  set carry = success, clc = fail 
     rts 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
