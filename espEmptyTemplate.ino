@@ -590,7 +590,7 @@ void IRAM_ATTR core0Loop() {
                     dcbHistory.push_back(*dcb);
                     if (dcbHistory.size() > 100) dcbHistory.erase(dcbHistory.begin());
                     iocb->carry = 0; // default to fail  
-                    if (dcb->DDEVIC == 0x31) {  // Device D1: 
+                    if (dcb->DDEVIC == 0x31 && dcb->DUNIT == 1) {  // Device D1: 
                         if (dcb->DCOMND == 0x53) { // SIO status command
                             // drive status https://www.atarimax.com/jindroush.atari.org/asio.html
                             atariRam[addr+0] = 0x00; // bit 0 = frame err, 1 = cksum err, wr err, wr prot, motor on, sect size, unused, med density  
