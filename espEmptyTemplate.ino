@@ -903,15 +903,17 @@ void threadFunc(void *) {
 
     //neopixelWrite(ledPin, 0, 8, 0);
 
-    const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
-    printf("partition find returned %p\n", partition);
 
-    if (1) { 
+    if (0) { 
+        const esp_partition_t *partition = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+        printf("partition find returned %p\n", partition);
+
         static uint32_t buf[256];
         int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
         printf("flash_read() returned %d\n", e);
     }
+    printf("GIT: " GIT_VERSION "\n");
 
 
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
