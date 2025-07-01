@@ -49,10 +49,10 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-#define FAKE_CLOCK
+//#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
-   bool fakeClock     = 1;
-   float histRunSec   = 120;
+   bool fakeClock     = 1; // XOPTS
+   float histRunSec   = 20;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -20;
@@ -230,10 +230,6 @@ inline void busywait(float sec) {
 
 
 
-#define USE_PRAGMA
-#ifdef USE_PRAGMA
-#pragma GCC optimize("O1") // avoid register write combining
-#endif
 
 void IRAM_ATTR simulateI2c() {
     int cycles = 240 * 1000000 / 100000 / 2;
@@ -453,6 +449,15 @@ struct {
     AtariIOCB *iocb0 = (AtariIOCB *)&atariRam[0x320];
 } atariMem;
 
+struct PbiIocb {
+    uint8_t req;
+    uint8_t a;
+    uint8_t x;
+    uint8_t y;
+    uint8_t cmd;
+    uint8_t carry;
+};
+
 template<class T> 
 struct StructLog { 
     int maxSize;
@@ -511,6 +516,11 @@ DiskImage atariDisks[8] = {
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
 
+#define USE_PRAGMA
+#ifdef USE_PRAGMA
+#pragma GCC optimize("O1") // O2 or above for core0Loop makes weird timings, improbably low core1 loop iterations around 60-70 cycles
+#endif
+
 // Apparently can't make any function calls from the core0 loops, even inline.  Otherwise it breaks 
 // timing on the core1 loop
 void IRAM_ATTR core0Loop() { 
@@ -563,6 +573,37 @@ void IRAM_ATTR core0Loop() {
             while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
         }
 
+#ifdef FAKE_CLOCK
+        if (0) { 
+            // STUFF some fake PBI commands to exercise code in the core0 loop during timing tests 
+            static uint32_t lastTsc;
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 100) {
+                volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
+                static int step = 0;
+                if (step == 1) { 
+                    // stuff a fake CIO put request
+                    #ifdef SIM_KEYPRESS
+                    fakeFile.filename = "J:KEYS"
+                    #endif 
+                    pbiRequest->cmd = 4; // put 
+                    pbiRequest->a = ' ';
+                    pbiRequest->req = 1;
+                } else if (step == 2) { 
+                    // stuff a fake SIO sector read request 
+                    volatile AtariDCB *dcb = atariMem.dcb;
+                    dcb->DBUFHI = dcb->DBUFLO = 0;
+                    dcb->DDEVIC = 0x31; dcb->DUNIT = 1;
+                    dcb->DAUX1 = 1; dcb->DAUX2 = 0;
+                    dcb->DCOMND = 0x52;
+                    pbiRequest->cmd = 7; // read a sector 
+                    pbiRequest->req = 1;
+                } else if (step == 2) { 
+                    
+                }
+                step = (step + 1) % 3;
+            }
+        }
+#endif 
         if (0) { 
             // why does this work when simulateI2c or even busywait(1) break timing?
             if (1) {
@@ -645,14 +686,6 @@ void IRAM_ATTR core0Loop() {
                 p = psram;
         }
         if (1) { // stubbed out dummy IO to PBI device 
-            struct PbiIocb {
-                uint8_t req;
-                uint8_t a;
-                uint8_t x;
-                uint8_t y;
-                uint8_t cmd;
-                uint8_t carry;
-            };
             volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
             static uint8_t dummyReadChar = 'A';
             
@@ -698,7 +731,7 @@ void IRAM_ATTR core0Loop() {
                 } else if (pbiRequest->cmd == 7) { // low level io, see DCB
 //#define ENABLE_SIO
 #ifdef ENABLE_SIO
-                    AtariDCB *dcb = atariMem.dcb;
+                    volatile AtariDCB *dcb = atariMem.dcb;
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
                     int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
                     //structLogs.dcb.add(*dcb);

@@ -1,3 +1,20 @@
+Added cowcatcher rising edge in read, seemed to tighten up timing
+98        0        0        0        0  HIST
+ 99      458        0        0        0  HIST
+ 100  40964675        0        0        0  HIST
+ 101  59171044        0        0        0  HIST
+ 102  4379548        0        0        0  HIST
+ 103      467        0        0        0  HIST
+ 104     5808        0        0        0  HIST
+ 105  40821431        0        0        0  HIST
+ 106  60079593        0        0        0  HIST
+ 107  3436684        0        0        0  HIST
+ 108      265        0        0        0  HIST
+ 109      216        0        0        0  HIST
+
+
+
+
 Just finished debugging PBI error 130.   Balanced the READ/WRITE
 portions of the core1 loop a little bit.  Timings now:
 99        0        0        0        0  HIST
