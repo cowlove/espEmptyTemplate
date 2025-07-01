@@ -587,8 +587,8 @@ void IRAM_ATTR core0Loop() {
                 } else if (iocb->cmd == 7) { // low level io, see DCB
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
                     int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
-                    dcbHistory.push_back(*dcb);
-                    if (dcbHistory.size() > 100) dcbHistory.erase(dcbHistory.begin());
+                    //dcbHistory.push_back(*dcb);
+                    //if (dcbHistory.size() > 100) dcbHistory.erase(dcbHistory.begin());
                     iocb->carry = 0; // default to fail  
                     if (dcb->DDEVIC == 0x31 && dcb->DUNIT == 1) {  // Device D1: 
                         if (dcb->DCOMND == 0x53) { // SIO status command
