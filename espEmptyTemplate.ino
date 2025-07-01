@@ -49,10 +49,11 @@
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
-#define FAKE_CLOCK
+// XOPTS    
+//#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
-   bool fakeClock     = 1; // XOPTS
-   float histRunSec   = 120;
+   bool fakeClock     = 1; 
+   float histRunSec   = 20;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -20;
@@ -196,7 +197,7 @@ int psramLoopCount = 0;
 int lateCount = 0;
 int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
-bool stop = false;
+int stop = false;
 dedic_gpio_bundle_handle_t bundleIn, bundleOut;
 uint32_t lastAddr = -1;
 volatile int cumulativeResets = 0;
@@ -1073,6 +1074,7 @@ void threadFunc(void *) {
     printf("pbiROM[0x100] = %d\n", pbiROM[0x100]);
     printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
     printf("diskIoCount %d\n", diskReadCount);
+    printf("GIT: " GIT_VERSION "\n");
     
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
@@ -1452,7 +1454,7 @@ void IRAM_ATTR iloop_pbi() {
 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
     while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {};                      // wait falling clock edge
-    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
+    //uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
 
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
@@ -1464,9 +1466,9 @@ void IRAM_ATTR iloop_pbi() {
     int mpdActive = 0; // if this is bool the compiler does some WEIRD stuff with timing(?) 
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}                      // wait falling clock edge
+        if (stop) break; // provides a needed 3-cycle delay 
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        __asm__("nop");
-        __asm__("nop");
+
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);            
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
@@ -1483,7 +1485,6 @@ void IRAM_ATTR iloop_pbi() {
             } else {
                 // ~80 cycles intermittently available here to do misc infrequent work 
             }
-            if (stop) break;
             if (mpdActive == true) { 
                 REG_WRITE(GPIO_OUT1_W1TC_REG, mpdMask);
                 banks[0xd800 >> bankShift] = &pbiROM[0];

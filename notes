@@ -1,3 +1,43 @@
+Looking for best place to put if (stop) break.  Going with option B
+option a: line 1482 between REG_WRITEs 
+99  1798740        0        0        0  HIST
+ 100  7584968        0        0        0  HIST
+ 101    81404        0        0        0  HIST
+ 102  5581123        0        0        0  HIST
+ 103  5996475        0        0        0  HIST
+ 104  3201891        0        0        0  HIST
+ 105  3718929        0        0        0  HIST
+ 106      546        0        0        0  HIST
+ 107      160        0        0        0  HIST
+ 108       87        0        0        0  HIST
+ 109   848803        0        0        0  HIST
+ 110      182        0        0        0  HIST
+ 111       11        0        0        0  HIST
+
+
+option b: line 1468 replacing the nops right after falling edge
+101     1570        0        0        0  HIST
+ 102  3769837        0        0        0  HIST
+ 103  4376381        0        0        0  HIST
+ 104   724089        0        0        0  HIST
+ 105  4673662        0        0        0  HIST
+ 106    40301        0        0        0  HIST
+ 107   883541        0        0        0  HIST
+ 108        1        0        0        0  HIST
+
+option b: after the busy wait for the rising clock edge in writes 
+103      171        0        0        0  HIST
+ 104  2056007        0        0        0  HIST
+ 105      552        0        0        0  HIST
+ 106     1372        0        0        0  HIST
+ 107  3212378        0        0        0  HIST
+ 108  8591582        0        0        0  HIST
+ 109   921388        0        0        0  HIST
+ 110      840        0        0        0  HIST
+ 111      334        0        0        0  HIST
+
+
+
 Test loads now include artificial keychars and disk IO for core0 loop,
 spreading them out a bit:  It really seems to be ANY function call
 from core0 loop screws up core1 timings, even things like vector::size()
