@@ -404,7 +404,7 @@ int simulatedKeysAvailable = 0;
 // CORE0 loop options 
 #define ENABLE_SIO
 #define SIM_KEYPRESS
-#define SIM_KEYPRESS_FILE
+//#define SIM_KEYPRESS_FILE
 
 struct AtariIO {
     uint8_t buf[2048];
@@ -545,6 +545,10 @@ void IRAM_ATTR core0Loop() {
     uint8_t ledColor[3] = {0,0,0};
     uint32_t *psramPtr = psram;
     while(1) {
+        if (1) { // slow loop down to 1ms
+            stsc = XTHAL_GET_CCOUNT();
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
+        }
 
         if (0) {
             memcpy(psram, atariRam, sizeof(atariRam));
@@ -585,10 +589,6 @@ void IRAM_ATTR core0Loop() {
                     }
                 }
             }
-        }
-        if (1) { 
-            stsc = XTHAL_GET_CCOUNT();
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
         }
 
 #ifdef FAKE_CLOCK
