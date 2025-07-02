@@ -1,3 +1,20 @@
+Ooops caught that tscFall wasn't being set until after the if(stop)break
+100      201        0        0        0  HIST
+ 101     1175        0        0        0  HIST
+ 102  7201320        0        0        0  HIST
+ 103  6866713        0        0        0  HIST
+ 104     1824        0        0        0  HIST
+ 105  7539330        0        0        0  HIST
+ 106  7200786        0        0        0  HIST
+ 107     1516        0        0        0  HIST
+ 108       13        0        0        0  HIST
+ 109       12        0        0        0  HIST
+ 110        4        0        0        0  HIST
+channel 0: range  84 -110, jitter  26
+
+
+
+
 Deferred calculation of (currentD1FF == 1) until the next read cycle, hidden in the 
 shadow of a register write delay
 

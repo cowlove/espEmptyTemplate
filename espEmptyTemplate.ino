@@ -50,7 +50,7 @@
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
-//#define FAKE_CLOCK
+#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
    float histRunSec   = 20;
@@ -1480,8 +1480,8 @@ void IRAM_ATTR iloop_pbi() {
     //int mpdActive = 0; // if this is bool the compiler does some WEIRD stuff with timing(?) 
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}                      // wait falling clock edge
-        if (stop) break; // provides a needed 3-cycle delay 
         uint32_t tscFall = XTHAL_GET_CCOUNT();
+        if (stop) break; // provides a needed 3-cycle delay 
 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
         int mpdActive = (currentD1FF == 1);            
@@ -1493,7 +1493,7 @@ void IRAM_ATTR iloop_pbi() {
         if ((r0 & readWriteMask) != 0) { // XXREAD
             uint8_t data = *ramAddr;
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
-            if ((r0 & (casInh_Mask)) != 0) {
+            if ((r0 & casInh_Mask) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift)); 
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
