@@ -31,10 +31,9 @@ jmp PBI_ISR                         // 8,9,a
 .word PBI_SPECIAL - 1
 jmp PBI_INIT                        // D819,A,B
 .byt $ff
-
-.byt $ee
-.byt $ee
-.byt $ee
+.byt $0
+.byt $0
+.byt $0
 
 ESP32_IOCB_REQ
     .byt $0     ;  request - 6502 sets to 1 after filling out ESP32_IOCB struct, esp32 clears after handling
@@ -48,6 +47,11 @@ ESP32_IOCB_CMD
     .byt $0     ;  CMD 
 ESP32_IOCB_CARRY
     .byt $0
+
+.byt $0
+.byt $0
+.byt $0
+
 
 PBI_INIT
     nop

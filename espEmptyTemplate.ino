@@ -23,6 +23,9 @@
 #include "esp_err.h"
 #include "esp_flash.h"
 
+#if CONFIG_FREERTOS_UNICORE != 1 
+#error Arduino idf core must be compiled with CONFIG_FREERTOS_UNICORE=y
+#endif
 
 
 #else 
