@@ -27,7 +27,9 @@ endif
 UPLOAD_PORT ?= ${PORT}
 
 BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" -O3
-	
+BUILD_EXTRA_FLAGS += -mno-serialize-volatile
+
+
 #sed  's|^\(.*/srmodels.bin\)|#\1|g' -i ~/.arduino15/packages/esp32/hardware/esp32/3.2.0/boards.txt  
 
 csim-build:

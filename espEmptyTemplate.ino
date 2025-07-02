@@ -50,7 +50,7 @@
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
-//#define FAKE_CLOCK
+#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
    float histRunSec   = 20;
@@ -135,12 +135,12 @@ static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
 static const int bankShift = 16 - bankBits;
 
-DRAM_ATTR uint8_t *banks[nrBanks];
-DRAM_ATTR uint8_t atariRam[64 * 1024] = {0x0};
+DRAM_ATTR volatile uint8_t *banks[nrBanks];
+DRAM_ATTR volatile uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR uint8_t cartROM[] = {
 #include "joust.h"
 };
-DRAM_ATTR uint8_t pbiROM[2 * 1024] = {
+DRAM_ATTR volatile uint8_t pbiROM[2 * 1024] = {
 #include "pbirom.h"
 };
 DRAM_ATTR uint8_t diskImg[] = {
@@ -170,7 +170,7 @@ volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 #if 1
 #undef REG_READ
 #undef REG_WRITE
-#if 0
+#if 1
 #define REG_READ(r) (*((volatile uint32_t *)r))
 #define REG_WRITE(r,v) do { *((volatile uint32_t *)r) = (v); } while(0)
 #else
@@ -202,6 +202,10 @@ dedic_gpio_bundle_handle_t bundleIn, bundleOut;
 uint32_t lastAddr = -1;
 volatile int cumulativeResets = 0;
 volatile int currentResetValue = 1;
+
+DRAM_ATTR volatile int appCpuStartFlag = 0;
+DRAM_ATTR volatile int core1Reg = 0;
+
 
 JStuff j;
 
@@ -335,11 +339,11 @@ struct Hist2 {
         for(int i = 0; i < maxBucket; i++) sum += buckets[i];
         return sum;
     }
-    void clear() { bzero(buckets, sizeof(buckets)); }
+    void clear() { for(int i = 0; i < maxBucket; i++) buckets[i] = 0; }
 };
 
 
-    struct AtariIOCB { 
+struct AtariIOCB { 
     uint8_t ICHID,  // handler 
             ICDNO,  // Device number
             ICCOM,  // Command byte 
@@ -369,8 +373,8 @@ const struct AtariDefStruct {
     int NEWPORT = 0x31ff;
 } AtariDef;
 
-static const int numProfilers = 4;
-Hist2 profilers[numProfilers];
+static const int numProfilers = 1;
+DRAM_ATTR Hist2 profilers[numProfilers];
 int ramReads = 0, ramWrites = 0;
 
 const char *defaultProgram = 
@@ -403,7 +407,7 @@ int simulatedKeysAvailable = 0;
 
 // CORE0 loop options 
 #define ENABLE_SIO
-#define SIM_KEYPRESS
+//#define SIM_KEYPRESS
 //#define SIM_KEYPRESS_FILE
 
 struct AtariIO {
@@ -550,9 +554,20 @@ void IRAM_ATTR core0Loop() {
             stsc = XTHAL_GET_CCOUNT();
             while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
         }
-
         if (0) {
-            memcpy(psram, atariRam, sizeof(atariRam));
+            memcpy(psram, (void *)atariRam, sizeof(atariRam));
+        }
+        if (0) {
+            // same with this, hangs if interrupts are masked on core1 
+            static uint32_t buf[4];
+            int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
+            //printf("flash_read() returned %d\n", e);
+        }
+        if (0) {
+            // same with this, hangs if interrupts are masked on core1 
+            static uint32_t buf[128];
+            int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
+            //printf("flash_read() returned %d\n", e);
         }
         if (0) { 
             *psramPtr = 1;
@@ -592,7 +607,7 @@ void IRAM_ATTR core0Loop() {
         }
 
 #ifdef FAKE_CLOCK
-        if (1) { 
+        if (0) { 
             // Stuff some fake PBI commands to exercise code in the core0 loop during timing tests 
             static uint32_t lastTsc;
             if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 20) {
@@ -1003,9 +1018,9 @@ void threadFunc(void *) {
             }
         }
         for(int i = first; i <= last; i++) {
-            string s = sfmt("% 3d ", i);
+            string s = sfmt("% 4d ", i);
             for(int c = 0; c < numProfilers; c++) {
-                s += sfmt("% 8d ", profilers[c].buckets[i]);
+                s += sfmt("% 12d ", profilers[c].buckets[i]);
             }
             s += " HIST";
             v.push_back(s);
@@ -1087,6 +1102,7 @@ void threadFunc(void *) {
     printf("pbiROM[0x100] = %d\n", pbiROM[0x100]);
     printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
     printf("diskIoCount %d\n", diskReadCount);
+    printf("appCpuStartFlag %d core1Reg %d\n", appCpuStartFlag, core1Reg);
     printf("GIT: " GIT_VERSION "\n");
     
     printf("DONE %.2f\n", millis() / 1000.0);
@@ -1104,12 +1120,67 @@ void threadFunc(void *) {
 }
 
 #include "driver/spi_master.h"
+void *app_cpu_stack_ptr = NULL;
+#include "rom/ets_sys.h"
+#include "soc/dport_access.h"
+#include "soc/system_reg.h"
+static void IRAM_ATTR app_cpu_main();
+static void IRAM_ATTR app_cpu_init()
+{
+    // Reset the reg window. This will shift the A* registers around,
+    // so we must do this in a separate ASM block.
+    // Otherwise the addresses for the stack pointer and main function will be invalid.
+    asm volatile (                                \
+        "movi a0, 0\n"                            \
+        "wsr  a0, WindowStart\n"                \
+        "movi a0, 0\n"                            \
+        "wsr  a0, WindowBase\n"                    \
+        );
+    // init the stack pointer and jump to main function
+    asm volatile (                    \
+        "l32i a1, %0, 0\n"            \
+        "callx4   %1\n"                \
+        ::"r"(&app_cpu_stack_ptr),"r"(app_cpu_main));
+    REG_CLR_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_CLKGATE_EN);
+}
+
+void startCpu1() {  
+    if (REG_GET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_CLKGATE_EN)) {
+        printf("APP CPU is already running!\n");
+        return;
+    }
+
+    if (!app_cpu_stack_ptr) {
+        app_cpu_stack_ptr = heap_caps_malloc(1024, MALLOC_CAP_DMA);
+    }
+
+    DPORT_REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, 0);
+    DPORT_REG_WRITE(SYSTEM_CORE_1_CONTROL_0_REG, 0);
+    DPORT_REG_SET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_RESETING);
+    DPORT_REG_CLR_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_RESETING);
+
+    ets_set_appcpu_boot_addr((uint32_t)&app_cpu_init);
+    DPORT_REG_SET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_CLKGATE_EN);
+    uint32_t r0 = DPORT_REG_READ(SYSTEM_CORE_1_CONTROL_0_REG);
+    uint32_t r1 = DPORT_REG_READ(SYSTEM_CORE_1_CONTROL_1_REG);
+    
+    printf("Start APP CPU1 r0=%08x r1=%08x\n", r0, r1);
+    while(appCpuStartFlag == 0) { 
+        delay(1); 
+        //printf("core0 reg0 %08x, core1 reg0 %08x\n", REG_READ(GPIO_IN_REG), core1Reg);
+        yield(); 
+    }
+    //for(int n = 0; n < 10; n++) {
+    //    printf("Started APP CPU, core1 reg0 %08x, core0 reg0 %08x\n", core1Reg, REG_READ(GPIO_IN_REG));
+    //}
+}
 
 void setup() {
     for(auto i : pins) pinMode(i, INPUT);
     delay(500);
     Serial.begin(115200);
     printf("setup()\n");
+    //startCpu1();
 
     if (0) { // Stupid notes for trying direct SPI1 access.  esp_read_flash() would be way better 
         spi_bus_config_t buscfg={
@@ -1274,10 +1345,14 @@ void setup() {
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
 
-        pinMode(readWritePin, OUTPUT);
-        digitalWrite(readWritePin, 0);
-        ledcAttachChannel(readWritePin, testFreq / 4, 1, 2);
-        ledcWrite(readWritePin, 1);
+        if(1) {
+            pinMode(readWritePin, OUTPUT);
+            digitalWrite(readWritePin, 0);
+            ledcAttachChannel(readWritePin, testFreq / 8, 1, 2);
+            ledcWrite(readWritePin, 1);
+        } else { 
+            pinMode(readWritePin, INPUT_PULLUP);
+        }
 
 #if 1
         // write 0xd1ff to address pins to simulate worst-case slowest address decode
@@ -1309,10 +1384,19 @@ void setup() {
     printf("freq %.4fMhz threshold %d halfcycle %d clockMask %08x\n", 
         testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, clockMask);
 
+    startCpu1();
+    //uint32_t startTsc = XTHAL_GET_CCOUNT();
+    //while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000000) {};
+    while(0) {
+        yield();
+        printf("appCpuStartFlag %d reg %08x\n", appCpuStartFlag, core1Reg);
+        delay(10);
+    }
+    //threadFunc(NULL);
     xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
-        
-    uint32_t startTsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - startTsc < 120 * 1000000) {}
+    while(1) { yield(); delay(1000); };
+
+    //while(XTHAL_GET_CCOUNT() - startTsc < 120 * 1000000) {}
 }
 
 void IRAM_ATTR iloop_logicAnalyzer() {	
@@ -1485,17 +1569,28 @@ void IRAM_ATTR iloop_bitResponse() {
 
 // TODO shadow writes to ROM areas into atariRam[] so we can later reference PORTB bank bits 
 // TODO need to eventually manage the MPD output bit 
-    
-void IRAM_ATTR iloop_pbi() {	
+
+#include "soc/gpio_struct.h"
+#include "soc/io_mux_reg.h"
+#include "soc/gpio_sig_map.h"
+#include "hal/gpio_ll.h"
+#include "rom/gpio.h"
+
+void IRAM_ATTR iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
     };
+
     static uint8_t dummyStore;
 
-    while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
-    while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {};                      // wait falling clock edge
-    //uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
-    while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}                      // wait rising clock edge
+    for(auto i : pins) gpio_ll_input_enable(NULL, i);
+    gpio_matrix_in(clockPin, CORE1_GPIO_IN0_IDX, false);
+
+    while((dedic_gpio_cpu_ll_read_in()) == 0) {}
+    while((dedic_gpio_cpu_ll_read_in()) != 0) {}
+    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
+    appCpuStartFlag = 1;
+    while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
@@ -1506,7 +1601,7 @@ void IRAM_ATTR iloop_pbi() {
 
     //int mpdActive = 0; // if this is bool the compiler does some WEIRD stuff with timing(?) 
     do {    
-        while((dedic_gpio_cpu_ll_read_in()) != 0) {}                      // wait falling clock edge
+        while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         if (stop) break; // provides a needed 3-cycle delay 
 
@@ -1516,7 +1611,7 @@ void IRAM_ATTR iloop_pbi() {
         uint32_t r0 = REG_READ(GPIO_IN_REG);
 
         uint16_t addr = (r0 & addrMask) >> addrShift;
-        uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
+        volatile uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
         if ((r0 & readWriteMask) != 0) { // XXREAD
             uint8_t data = *ramAddr;
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
@@ -1542,9 +1637,9 @@ void IRAM_ATTR iloop_pbi() {
             if ((r0 & (casInh_Mask)) == 0)  
                 ramAddr = &dummyStore;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
-            __asm__("nop"); 
-            __asm__("nop"); 
-            __asm__("nop"); 
+            __asm__ __volatile__ ("nop"); 
+            __asm__ __volatile__ ("nop"); 
+            __asm__ __volatile__ ("nop"); 
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
             if (addr == 0xd1ff) {
@@ -1684,6 +1779,7 @@ void IRAM_ATTR iloop_timings2() {
 }
 
 void loop() {
+    while(1) { yield(); delay(1); }
     if (0)  { // TMP demonstrate use of usb d-/+ pins 19,20 as input, demonstrate neopixel LED
         int toggle = 0;
         pinMode(19, INPUT);
@@ -1744,6 +1840,16 @@ void loop() {
         delay(1000); 
     }
 }
+
+static void IRAM_ATTR app_cpu_main() {
+    uint32_t oldint;
+    XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
+    _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi;  // saves 5 cycles, could save more 
+    __asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
+    iloop_pbi();    
+    while(1) {}
+}
+
 
 #ifdef CSIM
 class SketchCsim : public Csim_Module {

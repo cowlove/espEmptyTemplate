@@ -1,4 +1,17 @@
-Ooops caught that tscFall wasn't being set until after the if(stop)break
+New single core freertos, still have to run core0 with interrupts, but now can 
+access esp_flash_read() without hanging. 
+103            7  HIST
+104          484  HIST
+105      5746881  HIST
+106     13796361  HIST
+107      9263325  HIST
+108          448  HIST
+109          368  HIST
+
+
+
+Ooops caught that tscFall wasn't being set until after the if(stop)
+break
 100      201        0        0        0  HIST
  101     1175        0        0        0  HIST
  102  7201320        0        0        0  HIST
