@@ -1103,12 +1103,39 @@ void threadFunc(void *) {
     }
 }
 
+#include "driver/spi_master.h"
+
 void setup() {
     for(auto i : pins) pinMode(i, INPUT);
     delay(500);
     Serial.begin(115200);
     printf("setup()\n");
+
+    if (0) { // Stupid notes for trying direct SPI1 access.  esp_read_flash() would be way better 
+        spi_bus_config_t buscfg={
+           /* .miso_io_num=19,
+            .mosi_io_num=23,
+            .sclk_io_num=18,
+            .quadwp_io_num=-1,
+            .quadhd_io_num=-1,
+            */
+        };
+        spi_bus_initialize(SPI1_HOST, &buscfg, 1); // 1: DMA channel
+
+        // 2. Add a device to the bus
+        spi_device_interface_config_t devcfg={
+           /* .clock_speed_hz=1000000,           //Clock out at 1MHz
+            .mode=0,                                //SPI mode 0
+            .spics_io_num=5,                     //CS pin
+            .queue_size=7,                          //We want to be able to queue 7 transactions at a time
+            */
+        };
+        spi_device_handle_t spi;
+        spi_bus_add_device(SPI1_HOST, &devcfg, &spi); // 'spi' will contain the device handle
+
+    }
     //spi_flash_init();
+
     if (0) { 
         pinMode(ledPin, OUTPUT);
         digitalWrite(ledPin, 0);
