@@ -545,6 +545,7 @@ void IRAM_ATTR core0Loop() {
     uint8_t ledColor[3] = {0,0,0};
     uint32_t *psramPtr = psram;
     while(1) {
+        uint32_t stsc;
         if (1) { // slow loop down to 1ms
             stsc = XTHAL_GET_CCOUNT();
             while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
@@ -559,7 +560,6 @@ void IRAM_ATTR core0Loop() {
             if (psramPtr >= psram + psram_sz / sizeof(*psramPtr)) 
                 psramPtr = psram;
         }
-        uint32_t stsc;
         if (0) {
             //rgb[0]++;
             int longCycles = 175;
