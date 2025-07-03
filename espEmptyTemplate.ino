@@ -678,8 +678,11 @@ void IRAM_ATTR core0Loop() {
         if (0) {
             memcpy(psram, (void *)atariRam, sizeof(atariRam));
         }
-        if (0) { // exercise flash file IO 
+        if (0) {
+            #ifdef FAKE_CLOCK
+            // exercise flash file IO 
             lfs_updateTestFile();
+            #endif
         }
         if (0) {
             //rgb[0]++;
@@ -812,7 +815,8 @@ void IRAM_ATTR core0Loop() {
                 // Disable PBI memory device 
                 busEnableSetBits = 0;
                 busEnableClearBits = dataMask | extSel_Mask | mpdMask;
-                delayTicks(240);
+                int busEnableDelay = 100; // usec
+                delayTicks(240 * busEnableDelay);
                 //diskReadCount = lfs_updateTestFile();
                 diskReadCount++;
                 #else
@@ -898,7 +902,7 @@ void IRAM_ATTR core0Loop() {
                 // Re-enable PBI device. 
                 busEnableClearBits = dataMask;
                 busEnableSetBits = dataMask | extSel_Mask | mpdMask;
-                delayTicks(240 * 10);
+                delayTicks(240 * busEnableDelay);
                 #endif
                 pbiRequest->req = 0;
             }
@@ -1650,6 +1654,7 @@ void IRAM_ATTR iloop_bitResponse() {
 #include "hal/gpio_ll.h"
 #include "rom/gpio.h"
 
+
 void IRAM_ATTR iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
@@ -1678,6 +1683,8 @@ void IRAM_ATTR iloop_pbi() {
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         __asm__ __volatile__ ("nop");
         __asm__ __volatile__ ("nop");
+        //const uint32_t busEnClearBits = busEnableClearBits;
+        //const uint32_t busEnSetBits = busEnableSetBits;
 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, busEnableClearBits);
         const int mpdActive = (currentD1FF == 1);            
@@ -1708,6 +1715,8 @@ void IRAM_ATTR iloop_pbi() {
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+            //if (busEnSetBits == 0)
+            //    ramAddr = &dummyStore;
             __asm__ __volatile__ ("nop"); 
             __asm__ __volatile__ ("nop");
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
@@ -1718,7 +1727,7 @@ void IRAM_ATTR iloop_pbi() {
             }
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }
-        busMon.add(r0);
+        //busMon.add(r0);
 #ifdef FAKE_CLOCK // add profiling for bench timing runs 
         //profilers[0].add(tscFall - lastTscFall);  
         //lastTscFall = tscFall;
