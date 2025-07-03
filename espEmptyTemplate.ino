@@ -26,7 +26,6 @@
 //#include <esp_spi_flash.h>
 #include "esp_partition.h"
 #include "esp_err.h"
-#include "esp_flash.h"
 
 #if CONFIG_FREERTOS_UNICORE != 1 
 #error Arduino idf core must be compiled with CONFIG_FREERTOS_UNICORE=y and CONFIG_ESP_INT_WDT=n
@@ -35,9 +34,11 @@
 #else 
 #include "esp32csim.h"
 #endif
-#include "jimlib.h"
-#include "LittleFS.h"
 
+#include <vector>
+#include <string>
+using std::vector;
+using std::string;
 #include "ascii2keypress.h"
 // Usable pins
 // 0-18 21            (20)
@@ -154,6 +155,64 @@ DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
 
+std::string vsfmt(const char *format, va_list args);
+std::string sfmt(const char *format, ...);
+
+const esp_partition_t *partition;
+#define LOCAL_LFS
+#ifdef LOCAL_LFS
+#include "lfs.h"
+// variables used by the filesystem
+lfs_t lfs;
+lfs_file_t file;
+
+size_t partition_size = 0x20000;
+const int lfsp_block_sz = 4096;
+
+
+int lfsp_init() { 
+    partition = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+    //printf("partition find returned %p, part->erase_size %d\n", partition, partition->erase_size);
+    return 0;
+}
+int lfsp_read_block(const struct lfs_config *c, lfs_block_t block,
+            lfs_off_t off, void *buffer, lfs_size_t size) { 
+    //printf("read blk %d off %d size %d\n", block, off, size);                
+    return esp_partition_read(partition, block * lfsp_block_sz + off, buffer, size);
+}
+int lfsp_prog_block(const struct lfs_config *c, lfs_block_t block,
+            lfs_off_t off, const void *buffer, lfs_size_t size) { 
+    //printf("prog blk %d off %d size %d\n", block, off, size);                
+    return esp_partition_write(partition, block * lfsp_block_sz + off, buffer, size);
+}
+int lfsp_erase_block(const struct lfs_config *c, lfs_block_t block) { 
+    //printf("erase blk %d\n", block);
+    return esp_partition_erase_range(partition, lfsp_block_sz * block, lfsp_block_sz);
+}
+
+int lsfp_sync(const struct lfs_config *c) { return 0; }
+
+
+
+// configuration of the filesystem is provided by this struct
+const struct lfs_config cfg = {
+    // block device operations
+    .read  = lfsp_read_block,
+    .prog  = lfsp_prog_block,
+    .erase = lfsp_erase_block,
+    .sync  = lsfp_sync,
+
+    // block device configuration
+    .read_size = 16,
+    .prog_size = 16,
+    .block_size = 4096,
+    .block_count = 128,
+    .block_cycles = 500,
+    .cache_size = 16,
+    .lookahead_size = 16,
+};
+#endif
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
 // TODO: so eventaully looks like: pin 0 = reset, pin 19 = casInh input, pin 20 = interrupt, pin 47 = MPD
@@ -213,7 +272,7 @@ volatile int currentResetValue = 1;
 DRAM_ATTR volatile int core1Reg = 0;
 
 
-JStuff j;
+//JStuff j;
 
 volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
 int maxElapsed1 = 0, maxElapsed2 = 0;
@@ -293,6 +352,7 @@ void IRAM_ATTR NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val,
 
 //  socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
+#if 0
     //neopixelWrite(ledPin, 0, 0, 8);
     //char *host = "10.250.250.240";
     char *host = "192.168.68.131";
@@ -332,6 +392,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
     fflush(stdout);
     neopixelWrite(ledPin, 0, 8, 0);
+#endif
     return true;
 }
 
@@ -536,6 +597,33 @@ DiskImage atariDisks[8] = {
     {"none", (DiskImage::DiskImageRawData *)diskImg}, 
 };
 
+//#define BUS_MONITOR
+#ifdef BUS_MONITOR
+DRAM_ATTR class BusMonitor { 
+    static const int size = 2048; // must be power of 2
+    volatile int head;
+    int tail;
+    uint32_t r0hist[size];//, r1hist[size];
+public:
+    IRAM_ATTR inline void add(uint32_t r0) { //, uint32_t r1) {
+        r0hist[head] = r0; //r1hist[head] = r1;
+        head = (head + 1) & (size - 1);
+    }
+    IRAM_ATTR bool available() { return head != tail; }
+    IRAM_ATTR uint32_t get() { 
+        uint32_t rval = r0hist[tail];
+        tail = (tail + 1) & (size - 1); 
+    }
+} busMon;
+#else
+struct {
+    IRAM_ATTR inline void add(uint32_t) {}
+    IRAM_ATTR inline uint32_t get() { return 0; }
+    IRAM_ATTR inline bool available() { return false; }
+} busMon;
+#endif
+
+
 //#define BUS_DETACH
 #ifdef BUS_DETACH
 volatile 
@@ -562,32 +650,27 @@ void IRAM_ATTR core0Loop() {
     volatile int *drLoopCount = &dramLoopCount;
     uint8_t ledColor[3] = {0,0,0};
     uint32_t *psramPtr = psram;
+
     while(1) {
         uint32_t stsc;
         if (1) { // slow loop down to 1ms
             stsc = XTHAL_GET_CCOUNT();
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 100) {}
+        }
+        while(busMon.available() && pi < psram_sz / sizeof(psram[0])) { 
+            psram[pi++] = busMon.get(); 
         }
         if (0) {
             memcpy(psram, (void *)atariRam, sizeof(atariRam));
         }
-        if (0) {
-            // same with this, hangs if interrupts are masked on core1 
-            static uint32_t buf[4];
-            int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
-            //printf("flash_read() returned %d\n", e);
-        }
-        if (0) {
-            // same with this, hangs if interrupts are masked on core1 
-            static uint32_t buf[128];
-            int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
-            //printf("flash_read() returned %d\n", e);
-        }
-        if (0) { 
-            *psramPtr = 1;
-            psramPtr++;
-            if (psramPtr >= psram + psram_sz / sizeof(*psramPtr)) 
-                psramPtr = psram;
+        if (0) { // exercise flash file IO 
+            uint32_t boot_count = 0;
+            lfs_file_open(&lfs, &file, "boot_count", LFS_O_RDWR | LFS_O_CREAT);
+            lfs_file_read(&lfs, &file, &boot_count, sizeof(boot_count));
+            boot_count += 1;
+            lfs_file_rewind(&lfs, &file);
+            lfs_file_write(&lfs, &file, &boot_count, sizeof(boot_count));
+            lfs_file_close(&lfs, &file);
         }
         if (0) {
             //rgb[0]++;
@@ -691,36 +774,6 @@ void IRAM_ATTR core0Loop() {
         }
 #endif
 #if 0 
-        if (0 && partition != NULL) {
-            // Even this doesn't work - esp_* calls usually hang even if interrupts are enabled on core0, 
-            // presumably because it tries to synch with core1.   Try compiling lib_idf to completely ignore core1 
-            // and maybe we can temporarily enable interrupts on core0 to do IO?  Would require pausing the 6502 
-            // 
-            // Maybe we can use super-low-level spi routines to directly access flash from core0?  
-            
-            uint32_t oldint;
-            const char data[] = "This is the data to write";
-            //__asm__ __volatile__("rsil %0, 0" : "=r"(oldint) : );
-            enableCore0WDT();
-            portENABLE_INTERRUPTS();
-    
-            int err = esp_partition_write(partition, 0, data, sizeof(data));
-
-            portDISABLE_INTERRUPTS();
-            disableCore0WDT();
-
-            //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
-            if (err == ESP_OK) {
-                //printf("partition write returned %d\n", err);
-            }
-        }
-        if (0) {
-            // same with this, hangs if interrupts are masked on core1 
-            static uint32_t buf[256];
-            int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
-            //printf("flash_read() returned %d\n", e);
-        }
-
         if (fakeRamErrCount > 0 && atariRam[1666] == 0) { 
             fakeRamErrCount--;
             atariRam[1666] = 1;
@@ -865,6 +918,7 @@ void IRAM_ATTR core0Loop() {
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
+            
 #if 0 
             if (opt.core0Led) { 
                 if (elapsedSec & 1) {
@@ -914,8 +968,6 @@ void IRAM_ATTR core0Loop() {
 void threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
 
-    SPIFFSVariableESP32Base::begin();
-
     pinMode(ledPin, OUTPUT);
     digitalWrite(ledPin, 0);
 
@@ -953,17 +1005,10 @@ void threadFunc(void *) {
 
     //neopixelWrite(ledPin, 0, 8, 0);
 
-
     if (0) { 
-        const esp_partition_t *partition = esp_partition_find_first(
-            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
-        printf("partition find returned %p\n", partition);
 
-        static uint32_t buf[256];
-        int e = esp_flash_read(NULL, buf, 0x1000, sizeof(buf)); 
-        printf("flash_read() returned %d\n", e);
     }
-    printf("GIT: " GIT_VERSION "\n");
+    printf("GIT: " GIT_VERSION " \n");
 
 
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
@@ -1044,6 +1089,7 @@ void threadFunc(void *) {
                 if (profilers[c].buckets[i] > 0 && i < first) first = i;
             }
         }
+
         for(int i = first; i <= last; i++) {
             string s = sfmt("% 4d ", i);
             for(int c = 0; c < numProfilers; c++) {
@@ -1067,14 +1113,14 @@ void threadFunc(void *) {
         uint64_t totalEvents = 0;
         for(int i = 0; i < profilers[0].maxBucket; i++)
             totalEvents += profilers[0].buckets[i];
-        v.push_back(sfmt("Total samples %lld implies %.2f sec sampling\n",
-                    totalEvents, 1.0 * totalEvents / 1.8 / 1000000));
+        v.push_back(sfmt("Total samples %lld implies %.2f sec sampling\n", totalEvents, 1.0 * totalEvents / 1.8 / 1000000));
 
         for(auto s : v) 
             printf("%s\n", s.c_str());
+#if 0 
         printf("Writing to flash\n");
         yield(); 
-        LittleFS.remove("/histogram");
+        //LittleFS.remove("/histogram");
         yield();
         printf("LittleFS.remove() finished\n"); 
         SPIFFSVariable<vector<string>> h("/histogram", {});
@@ -1083,6 +1129,7 @@ void threadFunc(void *) {
         h = v;
         printf("Done writing to flash\n"); 
         //neopixelWrite(ledPin, 0, 0, 8);
+#endif 
     }
     
     printf("DUMP %.2f\n", millis() / 1000.0);
@@ -1194,32 +1241,40 @@ void setup() {
     delay(500);
     Serial.begin(115200);
     printf("setup()\n");
-    //startCpu1();
 
-    if (0) { // Stupid notes for trying direct SPI1 access.  esp_read_flash() would be way better 
-        spi_bus_config_t buscfg={
-           /* .miso_io_num=19,
-            .mosi_io_num=23,
-            .sclk_io_num=18,
-            .quadwp_io_num=-1,
-            .quadhd_io_num=-1,
-            */
-        };
-        spi_bus_initialize(SPI1_HOST, &buscfg, 1); // 1: DMA channel
+#ifdef LOCAL_LFS
+    lfsp_init();
+    printf("lfsp_init() complete\n");
+    int err = lfs_mount(&lfs, &cfg);
+    printf("lfs_mount() returned %d\n", err);
 
-        // 2. Add a device to the bus
-        spi_device_interface_config_t devcfg={
-           /* .clock_speed_hz=1000000,           //Clock out at 1MHz
-            .mode=0,                                //SPI mode 0
-            .spics_io_num=5,                     //CS pin
-            .queue_size=7,                          //We want to be able to queue 7 transactions at a time
-            */
-        };
-        spi_device_handle_t spi;
-        spi_bus_add_device(SPI1_HOST, &devcfg, &spi); // 'spi' will contain the device handle
-
+    // reformat if we can't mount the filesystem
+    // this should only happen on the first boot
+    if (err) {
+        printf("Formatting LFS\n");
+        lfs_format(&lfs, &cfg);
+        lfs_mount(&lfs, &cfg);
+    } else {
+        printf("LFS mounted\n");
     }
-    //spi_flash_init();
+
+      // read current count
+    uint32_t boot_count = 0;
+    lfs_file_open(&lfs, &file, "boot_count", LFS_O_RDWR | LFS_O_CREAT);
+    lfs_file_read(&lfs, &file, &boot_count, sizeof(boot_count));
+
+    // update boot count
+    boot_count += 1;
+    lfs_file_rewind(&lfs, &file);
+    lfs_file_write(&lfs, &file, &boot_count, sizeof(boot_count));
+    lfs_file_close(&lfs, &file);
+
+
+    // print the boot count
+    printf("boot_count: %d\n", boot_count);
+
+#endif
+
 
     if (0) { 
         pinMode(ledPin, OUTPUT);
@@ -1233,6 +1288,7 @@ void setup() {
         }
     }
 
+#if 0
     if (opt.histogram) { 
         SPIFFSVariable<vector<string>> hist("/histogram", {});
         vector<string> v = hist;
@@ -1240,6 +1296,7 @@ void setup() {
             printf("PREVIOUS %s\n", s.c_str());
         }
     }
+#endif
     if (1) { 
         uint32_t val = 0x10000000;
         uint32_t mask = 0x10000000;
@@ -1653,7 +1710,7 @@ void IRAM_ATTR iloop_pbi() {
             }
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }
-
+        busMon.add(r0);
 #ifdef FAKE_CLOCK // add profiling for bench timing runs 
         //profilers[0].add(tscFall - lastTscFall);  
         //lastTscFall = tscFall;
@@ -1919,6 +1976,34 @@ class SketchCsim : public Csim_Module {
 // NOTES:
 // 8-pin i2c io expander: https://media.digikey.com/pdf/Data%20Sheets/NXP%20PDFs/PCF8574(A).pdf
 // TODO: verify polarity of RW, MPD, casInh, etc 
+
+
+std::string vsfmt(const char *format, va_list args) {
+        va_list args2;
+        va_copy(args2, args);
+        char buf[128]; // don't understand why stack variable+copy is faster
+        string rval;
+
+        int n = vsnprintf(buf, sizeof(buf), format, args);
+        if (n > sizeof(buf) - 1) {
+                rval.resize(n + 2, ' ');
+                vsnprintf((char *)rval.data(), rval.size(), format, args2);
+                //printf("n %d size %d strlen %d\n", n, (int)rval.size(), (int)strlen(rval.c_str()));
+                rval.resize(n);
+        } else { 
+                rval = buf;
+        }
+        va_end(args2);
+        return rval;
+}
+
+std::string sfmt(const char *format, ...) { 
+    va_list args;
+    va_start(args, format);
+        string rval = vsfmt(format, args);
+        va_end(args);
+        return rval;
+}
 
 
 #if 0 
