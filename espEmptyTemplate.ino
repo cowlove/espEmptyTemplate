@@ -655,7 +655,7 @@ void IRAM_ATTR core0Loop() {
         uint32_t stsc;
         if (1) { // slow loop down to 1ms
             stsc = XTHAL_GET_CCOUNT();
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 100) {}
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
         }
         while(busMon.available() && pi < psram_sz / sizeof(psram[0])) { 
             psram[pi++] = busMon.get(); 
@@ -940,7 +940,7 @@ void IRAM_ATTR core0Loop() {
                 //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if (elapsedSec == 5) { 
-                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
+               // for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
             if(atariRam[754] == 23) break;

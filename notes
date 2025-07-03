@@ -1,3 +1,41 @@
+
+
+
+
+
+b97b0a ran for 36 hours!
+
+Good results by removing if(stop) break line and messing with "volatile" which actually seems
+to improve things in cases.  Added volatile globals for disabling bus. 
+
+  96          655            0            0  HIST
+  97      4173048            0            0  HIST
+  98      8664100            0            0  HIST
+  99         3198            0            0  HIST
+ 100      6500561            0            0  HIST
+ 101      7862060            0            0  HIST
+ 102          211            0            0  HIST
+ 103       583660            0            0  HIST
+ 104      1020217            0            0  HIST
+ 105            6            0            0  HIST
+
+ But don't really understand why things show slower when profiling r/w branches separately:
+ 99            0            0           20  HIST
+ 100            0            1            1  HIST
+ 101            0            1          510  HIST
+ 102            0            1          275  HIST
+ 103            0            0          526  HIST
+ 104            0            1     14384385  HIST
+ 105            0            0          543  HIST
+ 106            0            1            0  HIST
+ 107            0            8            2  HIST
+ 108            0         1126            0  HIST
+ 109            0         1439            0  HIST
+ 110            0     14419214            0  HIST
+
+
+
+
 Exploring timings for using a volatile busEnableBits.  Current constant enable bits timing:
 100            5  HIST
  101            4  HIST
@@ -75,6 +113,9 @@ shadow of a register write delay
  104      127        0        0        0  HIST
  105       57        0        0        0  HIST
  106        1        0        0        0  HIST
+
+
+
 
 
 
