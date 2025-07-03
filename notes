@@ -1,3 +1,32 @@
+Comparison of the current build and the legendary 36 hour build.  
+Guessing that timing under 108 is key
+
+  1.2x10  +----------------------------------------------------------------+   
+          |        +         +        +        +     *  +         +        |   
+        7 |                                     'timi*g.txt' u 1:2 ******* |   
+    1x10  |-+                      'stash/timing.b97b0a.txt' u 1:2 #######-|   
+          |                                         **                     |   
+          |                                        * *                     |   
+        6 |                                  #     *  *                    |   
+    8x10  |-+                                #     *  *                  +-|   
+          |                                  #    *   *                    |   
+        6 |                                  #    *   *                    |   
+    6x10  |-+                               # #   *   *                  +-|   
+          |                                 # #   *   *   #                |   
+        6 |                                 #*#  * #  *   #                |   
+    4x10  |-+                               #*#  *##  *   ##             +-|   
+          |                                 #*# **# #  # # #               |   
+          |                                 # #* #  #  # # #               |   
+        6 |                                #*  # #  # ## #  #              |   
+    2x10  |-+                              #*  ##    ##*##  # *          +-|   
+          |                                #*  ##    # *#    # *           |   
+          |        +         +        +    #   #        #  **# *  +        |   
+        0 +----------------------------------------------------------------+   
+          80       85        90       95      100      105       110      115  
+                                                                               
+
+
+
 Investigating what broke all the recent changes: looks like declaring the busEnable masks
 "volatile" lets it work.  Difference in timings:
 WORKS:
