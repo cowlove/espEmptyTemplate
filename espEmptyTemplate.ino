@@ -58,7 +58,7 @@ using std::string;
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
-#define FAKE_CLOCK
+//#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
    float histRunSec   = 20;
@@ -146,7 +146,7 @@ static const int bankShift = 16 - bankBits;
 DRAM_ATTR volatile uint8_t *banks[nrBanks];
 DRAM_ATTR volatile uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR uint8_t cartROM[] = {
-#include "joust.h"
+//#include "joust.h"
 };
 DRAM_ATTR volatile uint8_t pbiROM[2 * 1024] = {
 #include "pbirom.h"
