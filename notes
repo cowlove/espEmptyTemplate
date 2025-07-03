@@ -1,3 +1,35 @@
+Its looking like the unicore build *can* access flash with interrupts masked, but it
+still messes up core1 timing.  One idea to still allow core0 to do complex tasks is 
+to have the 6502 park itself in a safe harmless loop, then disable the core1 PBI bus loop, 
+allowing RAM reads to fall through to the underlying native 6502 ram (which should
+contain a usable mirror of the ram contents), then.  
+
+The 6502 parking loop can't be in PBI rom, it has to be in true 6502 rom.  Maybe the stack
+is the best place to find free ram, but it would be awkward to jump to.     Pseudocode:
+
+    LDA #xx     ; push mini-program on stack byte by byte in reverse order  
+    PHA 
+    LDA #xx
+    PHA  
+
+    TSX         ; stack pointer now points to newly-placed program - 1 
+    LDA #0      ; push 16-bit address 00SP+1 onto stack 
+    PHA        
+    TXA 
+    PHA
+    RTS
+
+    
+    INX
+    INX
+    INX
+
+
+    lda ESP32_IOCB_REQ # must be nonzero in the overlapped math ROM
+    bne PBI_WAITREQ
+    rts
+
+
 New single core freertos, still have to run core0 with interrupts, but now can 
 access esp_flash_read() without hanging. 
 103            7  HIST

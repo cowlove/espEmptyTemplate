@@ -11,9 +11,8 @@ NEWDEV  =   $E486
 
 IOCBCHIDZ = $20
 
-
-
 * = $d800
+;* = $0600
 
 .word    $fff,                       // D800 ROM cksum lo
 .byt    $01,                        // D802 ROM version
@@ -38,20 +37,19 @@ jmp PBI_INIT                        // D819,A,B
 ESP32_IOCB_REQ
     .byt $0     ;  request - 6502 sets to 1 after filling out ESP32_IOCB struct, esp32 clears after handling
 ESP32_IOCB_A
-    .byt $0     ;  A - iocb index * $20 
+    .byt $ee     ;  A - iocb index * $20 
 ESP32_IOCB_X
-    .byt $0     ;  X -  
+    .byt $ee     ;  X -  
 ESP32_IOCB_Y
-    .byt $0     ;  Y -  
+    .byt $ee    ;  Y -  
 ESP32_IOCB_CMD
-    .byt $0     ;  CMD 
+    .byt $ee     ;  CMD 
 ESP32_IOCB_CARRY
-    .byt $0
+    .byt $ee
 
-.byt $0
-.byt $0
-.byt $0
-
+TEST_ENTRY
+    PLA
+    JMP SAFE_WAIT
 
 PBI_INIT
     nop
@@ -88,9 +86,9 @@ PBI_INIT
     ;ldy GENDEV & $ff
     ;jsr NEWDEV		//; returns: N = 1 - failed, C = 0 - success, C =1 - entry already exists
 
-    ldx #TEST_END-TEST_MPD
+    ldx #COPY_END-COPY_BEGIN-1
 L1
-    lda TEST_MPD,x
+    lda COPY_BEGIN,x
     sta $0600,x
     dex
     bpl L1
@@ -110,7 +108,7 @@ PBI_ISR
     jmp PBI_ALL
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; CIO ROUTINES 
+// CIO ROUTINES 
 
 PBI_OPEN
 // check IOCBCHIDZ see if this is for us
@@ -140,11 +138,16 @@ PBI_ALL
     sta ESP32_IOCB_CMD
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y
+
+    ///////////////////////////////////////////////////
+    // TODO: replace this PBI_WAITREQ loop with:
+    // jsr SAFE_WAIT 
     lda #1
     sta ESP32_IOCB_REQ
 PBI_WAITREQ
     lda ESP32_IOCB_REQ
     bne PBI_WAITREQ
+    //////////////////////////////////////////////////
     lda ESP32_IOCB_CARRY
     ror  
     lda ESP32_IOCB_A
@@ -152,18 +155,17 @@ PBI_WAITREQ
     ldy ESP32_IOCB_Y
     rts 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Simple test code copied into page 6 by PBI_INIT 
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Simple test code copied into page 6 by PBI_INIT 
 
+COPY_BEGIN
 TEST_MPD
-    nop
-    nop
     pla
     ldx #$ff
 L2
     ldy #$ff
 L3
-    lda #1
+   lda #1
     sta $d1ff
     lda #0
     sta $d1ff
@@ -172,6 +174,52 @@ L3
     dex
     bpl L2
     rts
+COPY_END
 
-TEST_END
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Busy wait in RAM while the PBI ROM is mapped out
+;; To avoid having to find free ram to do this, put the small 6-byte
+;; program on the stack and call it
+
+SAFE_WAIT
+    // push mini-program on stack in reverse order
+    ldx #(stack_res_wait_end - stack_res_wait - 1)
+push_prog_loop
+    lda stack_res_wait,x
+    pha
+    dex
+    bpl push_prog_loop
+
+    tsx       ; stack pointer now points to newly-placed program - 1 
+
+    lda #(return_from_stackprog - 1) / $100     // push JUMP_BACK -1 onto stack for RTS 
+    pha                                         // from mini-program
+    lda #(return_from_stackprog - 1) & $ff      // 
+    pha    
+
+    lda #$01      // push 16-bit address of stack-resident mini-prog onto stack 
+    pha
+    txa 
+    pha
+
+    lda #1                      //  
+    rts                         // jump to mini-prog
+
+return_from_stackprog
+
+    tsx
+    txa
+    adc #(stack_res_wait_end - stack_res_wait)
+    tax
+    txs
+    rts        
+
+stack_res_wait
+    sta ESP32_IOCB_REQ      // called with req value in A
+stack_res_loop
+    lda ESP32_IOCB_REQ
+    bne stack_res_loop
+    rts
+stack_res_wait_end
+
 

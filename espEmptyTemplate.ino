@@ -24,9 +24,8 @@
 #include "esp_flash.h"
 
 #if CONFIG_FREERTOS_UNICORE != 1 
-#error Arduino idf core must be compiled with CONFIG_FREERTOS_UNICORE=y
+#error Arduino idf core must be compiled with CONFIG_FREERTOS_UNICORE=y and CONFIG_ESP_INT_WDT=n
 #endif
-
 
 #else 
 #include "esp32csim.h"
