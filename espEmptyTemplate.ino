@@ -59,6 +59,8 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
+//#define BUS_DETACH
+
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
    float histRunSec   = 20;
@@ -233,7 +235,7 @@ static const int ledPin = 48;
 volatile uint32_t *gpio0 = (volatile uint32_t *)GPIO_IN_REG;
 volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
 
-#if 1
+#if 0
 #undef REG_READ
 #undef REG_WRITE
 #if 1
@@ -474,7 +476,7 @@ int simulatedKeysAvailable = 0;
 
 // CORE0 loop options 
 #define ENABLE_SIO
-//#define SIM_KEYPRESS
+#define SIM_KEYPRESS
 //#define SIM_KEYPRESS_FILE
 
 struct AtariIO {
@@ -624,13 +626,8 @@ struct {
 #endif
 
 
-//#define BUS_DETACH
-#ifdef BUS_DETACH
-volatile 
-#else 
-const 
-#endif
-uint32_t busEnableClearBits = dataMask, busEnableSetBits = dataMask | mpdMask | extSel_Mask;
+volatile uint32_t busEnableClearBits = dataMask;
+volatile uint32_t busEnableSetBits = dataMask | mpdMask | extSel_Mask;
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
@@ -655,7 +652,7 @@ void IRAM_ATTR core0Loop() {
         uint32_t stsc;
         if (1) { // slow loop down to 1ms
             stsc = XTHAL_GET_CCOUNT();
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000) {}
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 2000) {}
         }
         while(busMon.available() && pi < psram_sz / sizeof(psram[0])) { 
             psram[pi++] = busMon.get(); 
@@ -939,8 +936,8 @@ void IRAM_ATTR core0Loop() {
                 simulatedKeysAvailable = 1;
                 //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
-            if (elapsedSec == 5) { 
-               // for(int i = 0; i < numProfilers; i++) profilers[i].clear();
+            if (elapsedSec == 1) { 
+               for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
             if(atariRam[754] == 23) break;
@@ -1108,7 +1105,7 @@ void threadFunc(void *) {
                 if (profilers[c].buckets[i] > 0) first = i;
             }
             yield();
-            v.push_back(sfmt("channel %d: range %3d -%3d, jitter %3d", c, first, last, last - first));
+            v.push_back(sfmt("channel %d: range %3d -%3d, jitter %3d    HIST", c, first, last, last - first));
         }
         uint64_t totalEvents = 0;
         for(int i = 0; i < profilers[0].maxBucket; i++)

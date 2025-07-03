@@ -1,6 +1,92 @@
+Investigating what broke all the recent changes: looks like declaring the busEnable masks
+"volatile" lets it work.  Difference in timings:
+WORKS:
+  86           45            0            0  HIST
+  87           15            0            0  HIST
+  88           49            0            0  HIST
+  89            3            0            0  HIST
+  90            3            0            0  HIST
+  91            2            0            0  HIST
+  92           30            0            0  HIST
+  93           27            0            0  HIST
+  94           31            0            0  HIST
+  95            7            0            0  HIST
+  96            2            0            0  HIST
+  97            8            0            0  HIST
+  98          197            0            0  HIST
+  99      5076263            0            0  HIST
+ 100      3084408            0            0  HIST
+ 101      3436051            0            0  HIST
+ 102      8968937            0            0  HIST
+ 103     11582398            0            0  HIST
+ 104      1412284            0            0  HIST
+ 105       230076            0            0  HIST
+ 106          233            0            0  HIST
+ 107       586110            0            0  HIST
+ 108      1631585            0            0  HIST
+ 109          147            0            0  HIST
+ 110          483            0            0  HIST
+channel 0: range  86 -110, jitter  24    HIST
+channel 1: range   0 -  0, jitter   0    HIST
+channel 2: range   0 -  0, jitter   0    HIST
 
+FAILS:
+  82           15            0            0  HIST
+  83           61            0            0  HIST
+  84           30            0            0  HIST
+  85            3            0            0  HIST
+  86            1            0            0  HIST
+  87            2            0            0  HIST
+  88            4            0            0  HIST
+  89           45            0            0  HIST
+  90           13            0            0  HIST
+  91            2            0            0  HIST
+  92        15722            0            0  HIST
+  93      2056623            0            0  HIST
+  94      3880777            0            0  HIST
+  95         1119            0            0  HIST
+  96      5519168            0            0  HIST
+  97      7351397            0            0  HIST
+  98     13956883            0            0  HIST
+  99      1533678            0            0  HIST
+ 100          876            0            0  HIST
+ 101         1691            0            0  HIST
+ 102       468011            0            0  HIST
+ 103         8726            0            0  HIST
+ 104      1214469            0            0  HIST
+ 105           23            0            0  HIST
+ 106           74            0            0  HIST
+channel 0: range  82 -106, jitter  24    HIST
+channel 1: range   0 -  0, jitter   0    HIST
+channel 2: range   0 -  0, jitter   0    HIST
 
-
+Maybe too early? 
+       7                                                                      
+  1.4x10  +----------------------------------------------------------------+   
+          |          +          +          +     #   +          +          |   
+        7 |                                'timin#_pass.txt' u 1:2 ******* |   
+  1.2x10  |-+                              'timi##_fail.txt' u 1:2 #######-|   
+          |                                     ##          *              |   
+        7 |                                     # #        **              |   
+    1x10  |-+                                   # #        **            +-|   
+          |                                    #  #       *  *             |   
+        6 |                                    #  #       *  *             |   
+    8x10  |-+                                  #  #       *  *           +-|   
+        6 |                                   #   #      *   *             |   
+    6x10  |-+                                 #   #      *   *           +-|   
+          |                                  #    #      *   *             |   
+        6 |                                  #    #*     *   *             |   
+    4x10  |-+                           #    #     #*   *    *           +-|   
+          |                            # #  #     *#*  **     *            |   
+        6 |                            # #  #     *# **       *            |   
+    2x10  |-+                         #   # #     *#          *          +-|   
+          |                          #    # #     *#          #       **   |   
+          |          +          +    #     #     *  #+   ##  # #+   **  *  |   
+        0 +----------------------------------------------------------------+   
+          80         85         90         95       100        105        110  
+                                                                               
+******************************************************************************
+******************************************************************************
 
 
 b97b0a ran for 36 hours!

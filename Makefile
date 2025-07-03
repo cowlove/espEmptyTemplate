@@ -28,7 +28,7 @@ UPLOAD_PORT ?= ${PORT}
 
 BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" -O3
 BUILD_EXTRA_FLAGS += -mno-serialize-volatile
-
+BUILD_EXTRA_FLAGS += ${DEF}
 
 #sed  's|^\(.*/srmodels.bin\)|#\1|g' -i ~/.arduino15/packages/esp32/hardware/esp32/3.2.0/boards.txt  
 
@@ -52,6 +52,9 @@ mocat:
 	mosquitto_sub -h rp1.local -t "${MAIN_NAME}/#" -F "%I %t %p"   
 uc:
 	${MAKE} upload && ${MAKE} cat
+
+cuc:
+	${MAKE} clean && ${MAKE} upload && ${MAKE} cat
 
 backtrace:
 	tr ' ' '\n' | addr2line -f -i -e ./build/${BOARD}/*.elf
