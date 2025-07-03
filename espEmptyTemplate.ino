@@ -18,6 +18,11 @@
 #include <freertos/xtensa_timer.h>
 #include <freertos/xtensa_rtos.h>
 
+#include "driver/spi_master.h"
+#include "rom/ets_sys.h"
+#include "soc/dport_access.h"
+#include "soc/system_reg.h"
+
 //#include <esp_spi_flash.h>
 #include "esp_partition.h"
 #include "esp_err.h"
@@ -205,7 +210,6 @@ uint32_t lastAddr = -1;
 volatile int cumulativeResets = 0;
 volatile int currentResetValue = 1;
 
-DRAM_ATTR volatile int appCpuStartFlag = 0;
 DRAM_ATTR volatile int core1Reg = 0;
 
 
@@ -375,7 +379,7 @@ const struct AtariDefStruct {
     int NEWPORT = 0x31ff;
 } AtariDef;
 
-static const int numProfilers = 1;
+static const int numProfilers = 3;
 DRAM_ATTR Hist2 profilers[numProfilers];
 int ramReads = 0, ramWrites = 0;
 
@@ -531,6 +535,14 @@ struct DiskImage {
 DiskImage atariDisks[8] = {
     {"none", (DiskImage::DiskImageRawData *)diskImg}, 
 };
+
+//#define BUS_DETACH
+#ifdef BUS_DETACH
+volatile 
+#else 
+const 
+#endif
+uint32_t busEnableClearBits = dataMask, busEnableSetBits = dataMask | mpdMask | extSel_Mask;
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
@@ -733,6 +745,11 @@ void IRAM_ATTR core0Loop() {
             volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
             
             if (pbiRequest->req != 0) {
+                #ifdef BUS_DETACH
+                // Disable PBI memory device 
+                busEnableSetBits = 0;
+                busEnableClearBits = dataMask | extSel_Mask | mpdMask;
+                #endif
                 ledColor[1] += 3;
                 ledColor[0] += 2;
                 ledColor[2] += 1;
@@ -810,6 +827,11 @@ void IRAM_ATTR core0Loop() {
                     pbiRequest->carry = 0;
                 } 
                 pbiRequest->req = 0;
+                #ifdef BUS_DETACH
+                // Re-enable PBI device. 
+                busEnableClearBits = dataMask;
+                busEnableSetBits = dataMask | extSel_Mask | mpdMask;
+                #endif
             }
         }
 #if 0 
@@ -960,6 +982,9 @@ void threadFunc(void *) {
     core0Loop();
 
     stop = true;
+#ifdef FAKE_CLOCK
+    REG_SET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_RUNSTALL);
+#endif
     int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
     startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 2 * 24 * 1000000) {}
@@ -1104,7 +1129,6 @@ void threadFunc(void *) {
     printf("pbiROM[0x100] = %d\n", pbiROM[0x100]);
     printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
     printf("diskIoCount %d\n", diskReadCount);
-    printf("appCpuStartFlag %d core1Reg %d\n", appCpuStartFlag, core1Reg);
     printf("GIT: " GIT_VERSION "\n");
     
     printf("DONE %.2f\n", millis() / 1000.0);
@@ -1121,11 +1145,7 @@ void threadFunc(void *) {
     }
 }
 
-#include "driver/spi_master.h"
 void *app_cpu_stack_ptr = NULL;
-#include "rom/ets_sys.h"
-#include "soc/dport_access.h"
-#include "soc/system_reg.h"
 static void IRAM_ATTR app_cpu_main();
 static void IRAM_ATTR app_cpu_init()
 {
@@ -1167,14 +1187,6 @@ void startCpu1() {
     uint32_t r1 = DPORT_REG_READ(SYSTEM_CORE_1_CONTROL_1_REG);
     
     printf("Start APP CPU1 r0=%08x r1=%08x\n", r0, r1);
-    while(appCpuStartFlag == 0) { 
-        delay(1); 
-        //printf("core0 reg0 %08x, core1 reg0 %08x\n", REG_READ(GPIO_IN_REG), core1Reg);
-        yield(); 
-    }
-    //for(int n = 0; n < 10; n++) {
-    //    printf("Started APP CPU, core1 reg0 %08x, core0 reg0 %08x\n", core1Reg, REG_READ(GPIO_IN_REG));
-    //}
 }
 
 void setup() {
@@ -1387,13 +1399,8 @@ void setup() {
         testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, clockMask);
 
     startCpu1();
-    //uint32_t startTsc = XTHAL_GET_CCOUNT();
-    //while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000000) {};
-    while(0) {
-        yield();
-        printf("appCpuStartFlag %d reg %08x\n", appCpuStartFlag, core1Reg);
-        delay(10);
-    }
+    uint32_t startTsc = XTHAL_GET_CCOUNT();
+    while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {};
     //threadFunc(NULL);
     xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
     while(1) { yield(); delay(1000); };
@@ -1591,10 +1598,9 @@ void IRAM_ATTR iloop_pbi() {
     while((dedic_gpio_cpu_ll_read_in()) == 0) {}
     while((dedic_gpio_cpu_ll_read_in()) != 0) {}
     uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
-    appCpuStartFlag = 1;
     while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
-    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
+    REG_WRITE(GPIO_ENABLE1_W1TS_REG, busEnableSetBits); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
     //uint32_t gpio1OutClearMask = 0;
@@ -1605,20 +1611,21 @@ void IRAM_ATTR iloop_pbi() {
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        if (stop) break; // provides a needed 3-cycle delay 
+        __asm__ __volatile__ ("nop");
+        __asm__ __volatile__ ("nop");
 
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
-        int mpdActive = (currentD1FF == 1);            
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, busEnableClearBits);
+        const int mpdActive = (currentD1FF == 1);            
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
 
         uint16_t addr = (r0 & addrMask) >> addrShift;
         volatile uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
         if ((r0 & readWriteMask) != 0) { // XXREAD
-            uint8_t data = *ramAddr;
+            const uint8_t data = *ramAddr;
             //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
             if ((r0 & casInh_Mask) != 0) {
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
+                REG_WRITE(GPIO_ENABLE1_W1TS_REG, busEnableSetBits); //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift)); 
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
             } else {
@@ -1635,17 +1642,13 @@ void IRAM_ATTR iloop_pbi() {
             //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
-            // this will be needed eventually to handle not trashing RAM under mapped ROMS
-            if ((r0 & (casInh_Mask)) == 0)  
-                ramAddr = &dummyStore;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
+            __asm__ __volatile__ ("nop");
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
+            //if ((r0 & (casInh_Mask)) == 0) // TODO this could trash ram behind mapped ROMS, break banking later   
             *ramAddr = data;
             if (addr == 0xd1ff) {
-                //mpdActive = (data == 1);
                 currentD1FF = data;
             }
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 

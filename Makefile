@@ -26,7 +26,7 @@ else
 endif
 UPLOAD_PORT ?= ${PORT}
 
-BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" -O3
+BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\" -O2
 BUILD_EXTRA_FLAGS += -mno-serialize-volatile
 
 

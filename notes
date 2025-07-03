@@ -1,3 +1,19 @@
+Exploring timings for using a volatile busEnableBits.  Current constant enable bits timing:
+100            5  HIST
+ 101            4  HIST
+ 102           15  HIST
+ 103           10  HIST
+ 104          474  HIST
+ 105      5745825  HIST
+ 106     13798475  HIST
+ 107      9262265  HIST
+ 108          454  HIST
+ 109          373  HIST
+ 110          142  HIST
+
+
+
+
 Its looking like the unicore build *can* access flash with interrupts masked, but it
 still messes up core1 timing.  One idea to still allow core0 to do complex tasks is 
 to have the 6502 park itself in a safe harmless loop, then disable the core1 PBI bus loop, 
@@ -7,25 +23,14 @@ contain a usable mirror of the ram contents), then.
 The 6502 parking loop can't be in PBI rom, it has to be in true 6502 rom.  Maybe the stack
 is the best place to find free ram, but it would be awkward to jump to.     Pseudocode:
 
-    LDA #xx     ; push mini-program on stack byte by byte in reverse order  
-    PHA 
-    LDA #xx
-    PHA  
-
-    TSX         ; stack pointer now points to newly-placed program - 1 
-    LDA #0      ; push 16-bit address 00SP+1 onto stack 
-    PHA        
-    TXA 
-    PHA
-    RTS
 
     
     INX
     INX
     INX
 
-
-    lda ESP32_IOCB_REQ # must be nonzero in the overlapped math ROM
+    ;; compiles to 0xad, 0x20, 0xd8, 0xd0, 0xfb, 0x60
+    lda $D820            ;ESP32_IOCB_REQ # must be nonzero in the overlapped math ROM
     bne PBI_WAITREQ
     rts
 
