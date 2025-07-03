@@ -66,7 +66,7 @@ static const struct {
    float histRunSec   = 20;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = -20;
+   float histRunSec   = 20;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -274,7 +274,10 @@ volatile int currentResetValue = 1;
 DRAM_ATTR volatile int core1Reg = 0;
 
 
-//JStuff j;
+IRAM_ATTR inline void delayTicks(int ticks) { 
+    uint32_t startTsc = XTHAL_GET_CCOUNT();
+    while(XTHAL_GET_CCOUNT() - startTsc < ticks) {}
+}
 
 volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
 int maxElapsed1 = 0, maxElapsed2 = 0;
@@ -631,7 +634,7 @@ volatile uint32_t busEnableSetBits = dataMask | mpdMask | extSel_Mask;
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
-int diskReadCount = 0;
+volatile int diskReadCount = 0;
 
 #define USE_PRAGMA
 #ifdef USE_PRAGMA
@@ -795,6 +798,8 @@ void IRAM_ATTR core0Loop() {
             volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
             
             if (pbiRequest->req != 0) {
+                diskReadCount++;
+
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
                 busEnableSetBits = 0;
@@ -840,10 +845,10 @@ void IRAM_ATTR core0Loop() {
                 } else if (pbiRequest->cmd == 6) { // special 
                 } else if (pbiRequest->cmd == 7) { // low level io, see DCB
 #ifdef ENABLE_SIO
-                    volatile AtariDCB *dcb = atariMem.dcb;
+                    AtariDCB *dcb = atariMem.dcb;
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
                     int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
-                    //structLogs.dcb.add(*dcb);
+                    structLogs.dcb.add(*dcb);
                     if (dcb->DDEVIC == 0x31 && dcb->DUNIT >= 1 && dcb->DUNIT < sizeof(atariDisks)/sizeof(atariDisks[0]) + 1) {  // Device D1:
                         DiskImage::DiskImageRawData *disk = atariDisks[dcb->DUNIT - 1].image; 
                         if (disk != NULL) { 
@@ -862,7 +867,6 @@ void IRAM_ATTR core0Loop() {
                                     atariRam[addr + n] = disk->data[sectorOffset + n];
                                 //memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
                                 pbiRequest->carry = 1;
-                                diskReadCount++;
                             }
                             if (dcb->DCOMND== 0x50) {  // WRITE sector
                                 for(int n = 0; n < sectorSize; n++) 
@@ -881,6 +885,7 @@ void IRAM_ATTR core0Loop() {
                 // Re-enable PBI device. 
                 busEnableClearBits = dataMask;
                 busEnableSetBits = dataMask | extSel_Mask | mpdMask;
+                delayTicks(240 * 100);
                 #endif
             }
         }
@@ -1174,6 +1179,11 @@ void threadFunc(void *) {
     printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
     printf("diskIoCount %d\n", diskReadCount);
     printf("GIT: " GIT_VERSION "\n");
+    printf("Page 6: ");
+    for(int i = 0x600; i < 0x620; i++) { 
+        printf("%02x ", atariRam[i]);
+    }
+    printf("\n");
     
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);

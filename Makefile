@@ -50,10 +50,10 @@ socat:
 	socat udp-recvfrom:9000,fork - 
 mocat:
 	mosquitto_sub -h rp1.local -t "${MAIN_NAME}/#" -F "%I %t %p"   
-uc:
+uc:		pbirom.h
 	${MAKE} upload && ${MAKE} cat
 
-cuc:
+cuc:	pbirom.h
 	${MAKE} clean && ${MAKE} upload && ${MAKE} cat
 
 backtrace:

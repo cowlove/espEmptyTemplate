@@ -141,13 +141,21 @@ PBI_ALL
 
     ///////////////////////////////////////////////////
     // TODO: replace this PBI_WAITREQ loop with:
-    // jsr SAFE_WAIT 
+    // jsr SAFE_WAIT
+    // OPTION 1 
+#if 0
     lda #1
     sta ESP32_IOCB_REQ
 PBI_WAITREQ
     lda ESP32_IOCB_REQ
     bne PBI_WAITREQ
+
+#else
     //////////////////////////////////////////////////
+    // OPTION 2
+    jsr SAFE_WAIT
+#endif
+
     lda ESP32_IOCB_CARRY
     ror  
     lda ESP32_IOCB_A
@@ -158,6 +166,7 @@ PBI_WAITREQ
 //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 // Simple test code copied into page 6 by PBI_INIT 
 
+#if 1
 COPY_BEGIN
 TEST_MPD
     pla
@@ -175,6 +184,7 @@ L3
     bpl L2
     rts
 COPY_END
+#endif 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Busy wait in RAM while the PBI ROM is mapped out
@@ -206,10 +216,10 @@ push_prog_loop
     rts                         // jump to mini-prog
 
 return_from_stackprog
-
     tsx
     txa
-    adc #(stack_res_wait_end - stack_res_wait)
+    clc
+    adc #stack_res_wait_end - stack_res_wait
     tax
     txs
     rts        
