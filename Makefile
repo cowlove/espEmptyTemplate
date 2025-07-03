@@ -7,7 +7,7 @@ EXCLUDE_DIRS=${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim|${ALIBS}/PubSub
 PART_FILE=${ESP_ROOT}/tools/partitions/min_spiffs.csv
 GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 
-ESP_ROOT=${HOME}/src/arduino-esp32
+ESP_ROOT=${HOME}/src/arduino-esp32-singlecore
 #ESP_ROOT=${HOME}/src/esp32
 ARDUINO_LIBS="${ESP_ROOT}/libraries ${HOME}/Arduino/libraries"
 
