@@ -1,28 +1,29 @@
-  86           43            0            0  HIST
-  87           13            0            0  HIST
-  88           39            0            0  HIST
+  86           48            0            0  HIST
+  87           18            0            0  HIST
+  88           43            0            0  HIST
   89            8            0            0  HIST
-  90            1            0            0  HIST
-  91            2            0            0  HIST
-  92           34            0            0  HIST
-  93           22            0            0  HIST
-  94           29            0            0  HIST
-  95           10            0            0  HIST
-  96            4            0            0  HIST
-  97            3            0            0  HIST
-  98           29            0            0  HIST
-  99      5044311            0            0  HIST
- 100      3110238            0            0  HIST
- 101      3437141            0            0  HIST
- 102      8987950            0            0  HIST
- 103     11546515            0            0  HIST
- 104      1400118            0            0  HIST
- 105       254652            0            0  HIST
- 106          119            0            0  HIST
- 107       623579            0            0  HIST
- 108      1603869            0            0  HIST
- 109          193            0            0  HIST
- 110          621            0            0  HIST
-channel 0: range  86 -110, jitter  24    HIST
+  90            2            0            0  HIST
+  91            0            0            0  HIST
+  92           33            0            0  HIST
+  93           24            0            0  HIST
+  94           25            0            0  HIST
+  95            9            0            0  HIST
+  96            2            0            0  HIST
+  97            2            0            0  HIST
+  98           57            0            0  HIST
+  99      5088692            0            0  HIST
+ 100      3086626            0            0  HIST
+ 101      3464137            0            0  HIST
+ 102      8952456            0            0  HIST
+ 103     11496789            0            0  HIST
+ 104      1414143            0            0  HIST
+ 105       225901            0            0  HIST
+ 106           98            0            0  HIST
+ 107       636114            0            0  HIST
+ 108      1643318            0            0  HIST
+ 109          128            0            0  HIST
+ 110          447            0            0  HIST
+ 111            1            0            0  HIST
+channel 0: range  86 -111, jitter  25    HIST
 channel 1: range   0 -  0, jitter   0    HIST
 channel 2: range   0 -  0, jitter   0    HIST

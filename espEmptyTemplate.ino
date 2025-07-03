@@ -59,14 +59,14 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-//#define BUS_DETACH
+#define BUS_DETACH
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
    float histRunSec   = 20;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 20;
+   float histRunSec   = -20;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -214,6 +214,21 @@ const struct lfs_config cfg = {
     .cache_size = 16,
     .lookahead_size = 16,
 };
+
+int lfs_updateTestFile() { 
+      // read current count
+    uint32_t boot_count = 0;
+    lfs_file_open(&lfs, &file, "boot_count", LFS_O_RDWR | LFS_O_CREAT);
+    lfs_file_read(&lfs, &file, &boot_count, sizeof(boot_count));
+
+    // update boot count
+    boot_count += 1;
+    lfs_file_rewind(&lfs, &file);
+    lfs_file_write(&lfs, &file, &boot_count, sizeof(boot_count));
+    lfs_file_close(&lfs, &file);
+
+    return boot_count;
+}
 #endif
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
@@ -664,13 +679,7 @@ void IRAM_ATTR core0Loop() {
             memcpy(psram, (void *)atariRam, sizeof(atariRam));
         }
         if (0) { // exercise flash file IO 
-            uint32_t boot_count = 0;
-            lfs_file_open(&lfs, &file, "boot_count", LFS_O_RDWR | LFS_O_CREAT);
-            lfs_file_read(&lfs, &file, &boot_count, sizeof(boot_count));
-            boot_count += 1;
-            lfs_file_rewind(&lfs, &file);
-            lfs_file_write(&lfs, &file, &boot_count, sizeof(boot_count));
-            lfs_file_close(&lfs, &file);
+            lfs_updateTestFile();
         }
         if (0) {
             //rgb[0]++;
@@ -798,13 +807,18 @@ void IRAM_ATTR core0Loop() {
             volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
             
             if (pbiRequest->req != 0) {
-                diskReadCount++;
-
+                
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
                 busEnableSetBits = 0;
                 busEnableClearBits = dataMask | extSel_Mask | mpdMask;
-                #endif
+                delayTicks(240);
+                //diskReadCount = lfs_updateTestFile();
+                diskReadCount++;
+                #else
+                diskReadCount++;
+                #endif 
+
                 ledColor[1] += 3;
                 ledColor[0] += 2;
                 ledColor[2] += 1;
@@ -880,13 +894,13 @@ void IRAM_ATTR core0Loop() {
                 } else if (pbiRequest->cmd == 8) { // IRQ
                     pbiRequest->carry = 0;
                 } 
-                pbiRequest->req = 0;
                 #ifdef BUS_DETACH
                 // Re-enable PBI device. 
                 busEnableClearBits = dataMask;
                 busEnableSetBits = dataMask | extSel_Mask | mpdMask;
-                delayTicks(240 * 100);
+                delayTicks(240 * 10);
                 #endif
+                pbiRequest->req = 0;
             }
         }
 #if 0 
@@ -1265,20 +1279,7 @@ void setup() {
         printf("LFS mounted\n");
     }
 
-      // read current count
-    uint32_t boot_count = 0;
-    lfs_file_open(&lfs, &file, "boot_count", LFS_O_RDWR | LFS_O_CREAT);
-    lfs_file_read(&lfs, &file, &boot_count, sizeof(boot_count));
-
-    // update boot count
-    boot_count += 1;
-    lfs_file_rewind(&lfs, &file);
-    lfs_file_write(&lfs, &file, &boot_count, sizeof(boot_count));
-    lfs_file_close(&lfs, &file);
-
-
-    // print the boot count
-    printf("boot_count: %d\n", boot_count);
+    printf("boot_count: %d\n", lfs_updateTestFile());
 
 #endif
 

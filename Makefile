@@ -44,6 +44,8 @@ include ${ALIBS}/makeEspArduino/makeEspArduino.mk
 #include ./makeEspArduino/makeEspArduino.mk
 endif
 
+1cat:
+	stty -F ${PORT} -echo raw 921600 && cat ${PORT} 
 cat:    
 	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 921600 && cat ${PORT}; fi; done  | tee ./cat.`basename ${PORT}`.out
 socat:  
@@ -52,6 +54,9 @@ mocat:
 	mosquitto_sub -h rp1.local -t "${MAIN_NAME}/#" -F "%I %t %p"   
 uc:		pbirom.h
 	${MAKE} upload && ${MAKE} cat
+
+u1c:		pbirom.h
+	${MAKE} upload && sleep 1 && ${MAKE} 1cat
 
 cuc:	pbirom.h
 	${MAKE} clean && ${MAKE} upload && ${MAKE} cat
