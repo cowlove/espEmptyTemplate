@@ -59,7 +59,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
+//#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -838,7 +838,7 @@ void IRAM_ATTR core0Loop() {
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
                 disableBus();
-                diskReadCount = lfs_updateTestFile();
+                //diskReadCount = lfs_updateTestFile();
                 diskReadCount++;
                 #else
                 diskReadCount++;
@@ -977,7 +977,7 @@ void IRAM_ATTR core0Loop() {
 #endif
 #ifndef FAKE_CLOCK
             if (elapsedSec == 10) { 
-                addSimKeypress("   \233E.\"J\233          \233RUN\233\233DOS\233");
+                addSimKeypress("   \233E.\"J\233                         \233RUN\233\233DOS\233");
                 simulatedKeysAvailable = 1;
                 //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
@@ -1697,6 +1697,9 @@ void IRAM_ATTR iloop_pbi() {
 
     RAM_VOLATILE uint8_t * const bankD800[2] = { &atariRam[0xd800], &pbiROM[0] };
     uint32_t clrMask = 0, setMask = mpdMask;  
+
+    uint8_t * writeOptions[2] = { &dummyStore, &dummyStore };
+ 
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         #ifdef FAKE_CLOCK
@@ -1714,13 +1717,15 @@ void IRAM_ATTR iloop_pbi() {
         if ((r0 & readWriteMask) == 0) { 
             //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift;
-            uint8_t * const p[2] = { &dummyStore, banks[addr >> bankShift] + (addr & ~bankMask) };
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+            writeOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask); 
             const int idx = (fetchedBusMask >> dataShift) & 1;
+            while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             r1 = REG_READ(GPIO_IN1_REG); 
-            *p[idx] = (r1 >> dataShift);
+            *writeOptions[idx] = (r1 >> dataShift);
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
 
         } else {
