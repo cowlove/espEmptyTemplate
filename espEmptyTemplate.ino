@@ -1703,21 +1703,19 @@ void IRAM_ATTR iloop_pbi() {
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         const int mpdSelect = (atariRam[0xd1ff] & 1);
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
         clrMask = (mpdSelect << mpdShift);
         setMask = clrMask ^ mpdMask;
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
-        const uint32_t fetchedBusMask = busMask;
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
+        const uint32_t fetchedBusMask = busMask;
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         uint32_t r1;
  
         if ((r0 & readWriteMask) == 0 && (fetchedBusMask & dataMask) != 0) {
-            //////////////// WRITE /////////////    
+            //////////////// XXWRITE /////////////    
             const uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop");
             __asm__ __volatile__ ("nop"); 
             __asm__ __volatile__ ("nop");
             __asm__ __volatile__ ("nop"); 
@@ -1729,7 +1727,7 @@ void IRAM_ATTR iloop_pbi() {
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
 
         } else if ((r0 & readWriteMask) != 0) {
-            //////////////// R E A D /////////////    
+            //////////////// XXR E A D /////////////    
 
             if ((r0 & casInh_Mask) != 0)
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask); 
