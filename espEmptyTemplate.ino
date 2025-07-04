@@ -1696,43 +1696,43 @@ void IRAM_ATTR iloop_pbi() {
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
     RAM_VOLATILE uint8_t * const bankD800[2] = { &atariRam[0xd800], &pbiROM[0] };
-    uint32_t clrMask = 0, setMask = mpdMask;  
 
-    uint8_t * writeOptions[2] = { &dummyStore, &dummyStore };
- 
+    uint8_t * dataDestOptions[2] = { &dummyStore, &dummyStore };
+    uint32_t busMaskOptions[2] = { 0, 0 }; 
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         #ifdef FAKE_CLOCK
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         #endif
-        int mpdSelect = (atariRam[0xd1ff] & 1);
-        uint32_t fetchedBusMask = busMask;
+        const int mpdSelect = (atariRam[0xd1ff] & 1);
+        const uint32_t fetchedBusMask = busMask;
+        __asm__ __volatile__("");
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
-        clrMask = (mpdSelect << mpdShift) | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
-        setMask = clrMask ^ (mpdMask | extSel_Mask);
+        const uint32_t clrMask = (mpdSelect << mpdShift) | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
+        const uint32_t setMask = clrMask ^ (mpdMask | extSel_Mask);
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
-        uint32_t r0 = REG_READ(GPIO_IN_REG);
-        uint32_t r1;
+        const uint32_t r0 = REG_READ(GPIO_IN_REG);
  
         if ((r0 & readWriteMask) == 0) { 
             //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift;
-            writeOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask); 
+            dataDestOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask); 
             const int idx = (fetchedBusMask >> dataShift) & 1;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
-            r1 = REG_READ(GPIO_IN1_REG); 
-            *writeOptions[idx] = (r1 >> dataShift);
+            const uint32_t r1 = REG_READ(GPIO_IN1_REG); 
+            *dataDestOptions[idx] = (r1 >> dataShift);
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
 
         } else {
             //////////////// XXR E A D /////////////    
 
-            if ((r0 & casInh_Mask) != 0)
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask); 
+            const int idx = ((r0 & casInh_Mask) >> casInh_Shift); // zero put
+            busMaskOptions[1] = fetchedBusMask; // other option is 0 
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMaskOptions[idx]); 
             uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
             const uint8_t data = *ramAddr;
