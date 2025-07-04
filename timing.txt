@@ -7,14 +7,14 @@
   92            0            0            0  HIST
   93            0            0            0  HIST
   94            0            0            0  HIST
-  95     22737588            0            0  HIST
-  96      2488033            0            0  HIST
-  97       700490            0            0  HIST
-  98      3581971            0            0  HIST
-  99      4556857            0            0  HIST
- 100       566508            0            0  HIST
- 101       845578            0            0  HIST
- 102       529954            0            0  HIST
+  95     22737703            0            0  HIST
+  96      2488019            0            0  HIST
+  97       700431            0            0  HIST
+  98      3581803            0            0  HIST
+  99      4556967            0            0  HIST
+ 100       566542            0            0  HIST
+ 101       845538            0            0  HIST
+ 102       529976            0            0  HIST
  103            1            0            0  HIST
 channel 0: range  86 -103, jitter  17    HIST
 channel 1: range   0 -  0, jitter   0    HIST
