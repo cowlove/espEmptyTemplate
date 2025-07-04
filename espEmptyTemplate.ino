@@ -59,7 +59,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-//#define BUS_DETACH
+#define BUS_DETACH
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -1718,7 +1718,6 @@ void IRAM_ATTR iloop_pbi() {
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__ __volatile__ ("nop"); 
             __asm__ __volatile__ ("nop");
-            __asm__ __volatile__ ("nop"); 
             __asm__ __volatile__ ("nop");
             __asm__ __volatile__ ("nop"); 
             __asm__ __volatile__ ("nop");
