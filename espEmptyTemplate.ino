@@ -59,7 +59,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-//#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
+#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -170,16 +170,14 @@ DRAM_ATTR uint8_t diskImg[] = {
 };
 
 
-const int busEnableDelay = 1000; // usec
-
 volatile uint32_t busMask = dataMask;
 
 IRAM_ATTR void enableBus() { 
     busMask = dataMask | extSel_Mask | mpdMask;
-    delayTicks(240 * busEnableDelay);
+    delayTicks(240 * 100);
 }
 IRAM_ATTR void disableBus() {
-    delayTicks(240 * busEnableDelay);    
+    delayTicks(240 * 100);    
     busMask = extSel_Mask | mpdMask;
 }
 
@@ -840,7 +838,7 @@ void IRAM_ATTR core0Loop() {
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
                 disableBus();
-                //diskReadCount = lfs_updateTestFile();
+                diskReadCount = lfs_updateTestFile();
                 diskReadCount++;
                 #else
                 diskReadCount++;
@@ -1713,21 +1711,19 @@ void IRAM_ATTR iloop_pbi() {
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         uint32_t r1;
  
-        if ((r0 & readWriteMask) == 0 && (fetchedBusMask & dataMask) != 0) {
+        if ((r0 & readWriteMask) == 0) { 
             //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift;
-            RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
+            uint8_t * const p[2] = { &dummyStore, banks[addr >> bankShift] + (addr & ~bankMask) };
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop");
-            __asm__ __volatile__ ("nop");
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop");
+            const int idx = (fetchedBusMask >> dataShift) & 1;
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
             r1 = REG_READ(GPIO_IN1_REG); 
-            *ramAddr = (r1 >> dataShift);
+            *p[idx] = (r1 >> dataShift);
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
 
-        } else if ((r0 & readWriteMask) != 0) {
+        } else {
             //////////////// XXR E A D /////////////    
 
             if ((r0 & casInh_Mask) != 0)
@@ -1742,9 +1738,7 @@ void IRAM_ATTR iloop_pbi() {
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}
             //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
         
-        } else {   
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {};
-        }
+        } 
         //busMon.add(r0);
 #ifdef FAKE_CLOCK // add profiling for bench timing runs 
         //profilers[0].add(tscFall - lastTscFall);  
