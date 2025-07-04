@@ -59,7 +59,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-//#define BUS_DETACH
+#define BUS_DETACH
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -146,6 +146,12 @@ static const int nrBanks = 1 << bankBits;
 static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
 static const int bankShift = 16 - bankBits;
+
+#define BUSCTL_VOLATILE //volatile
+// to disable the bus, set busEnable to 0 and mask off the data lines;
+BUSCTL_VOLATILE uint32_t busEnable = 1;
+BUSCTL_VOLATILE uint32_t busMask = (dataMask | casInh_Mask | mpdMask);
+
 
 #define RAM_VOLATILE //volatile
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
@@ -647,17 +653,12 @@ struct {
 } busMon;
 #endif
 
-#if 1
-volatile uint32_t busEnableClearBits = dataMask;
-volatile uint32_t busEnableSetBits = dataMask | mpdMask | extSel_Mask;
-#else
-uint32_t busEnableClearBits = dataMask;
-uint32_t busEnableSetBits = dataMask | mpdMask | extSel_Mask;
-#endif
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
 volatile int diskReadCount = 0;
+
+
 
 #define USE_PRAGMA
 #ifdef USE_PRAGMA
@@ -825,8 +826,8 @@ void IRAM_ATTR core0Loop() {
                 
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
-                busEnableSetBits = 0;
-                busEnableClearBits = dataMask | extSel_Mask | mpdMask;
+                busEnable = 0;
+                busMask = extSel_Mask | mpdMask;
                 int busEnableDelay = 100; // usec
                 delayTicks(240 * busEnableDelay);
                 //diskReadCount = lfs_updateTestFile();
@@ -913,8 +914,8 @@ void IRAM_ATTR core0Loop() {
                 } 
                 #ifdef BUS_DETACH
                 // Re-enable PBI device. 
-                busEnableClearBits = dataMask;
-                busEnableSetBits = dataMask | extSel_Mask | mpdMask;
+                busMask = dataMask | extSel_Mask | mpdMask;
+                busEnable = 1;
                 delayTicks(240 * busEnableDelay);
                 #endif
                 pbiRequest->req = 0;
@@ -1670,8 +1671,6 @@ void IRAM_ATTR iloop_bitResponse() {
 #include "hal/gpio_ll.h"
 #include "rom/gpio.h"
 
-uint32_t busEnable = 1;
-
 void IRAM_ATTR iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
@@ -1691,9 +1690,9 @@ void IRAM_ATTR iloop_pbi() {
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
     static  struct {
-        uint32_t clrBits;
-        uint32_t setBits;
-        uint8_t * const bank;
+        BUSCTL_VOLATILE uint32_t clrBits;
+        BUSCTL_VOLATILE uint32_t setBits;
+        RAM_VOLATILE uint8_t * const bank;
     } busCtlMux[2] = {
         { .clrBits = (dataMask),           .setBits = (extSel_Mask | mpdMask), .bank = &atariRam[0xd000] }, 
         { .clrBits = (dataMask | mpdMask), .setBits = (extSel_Mask)          , .bank = &pbiROM[0]}
@@ -1726,7 +1725,8 @@ void IRAM_ATTR iloop_pbi() {
             //uint32_t maskMux[2] = { extSel_Mask | mpdMask, dataMask | extSel_Mask | mpdMask };
             //const int idx = ((r0 & casInh_Mask) >> casInh_Shift) & 1;
 
-            REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask | mpdMask);
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, (dataMask | casInh_Mask | mpdMask));//  busMask);
+            //REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMask); // XXX investigate- completely breaks timing
             uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
             const uint8_t data = *ramAddr;

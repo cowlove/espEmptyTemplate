@@ -1,22 +1,22 @@
-  87           21            0            0  HIST
-  88           21            0            0  HIST
-  89            0            0            0  HIST
-  90            0            0            0  HIST
-  91            0            0            0  HIST
-  92           35            0            0  HIST
-  93            1            0            0  HIST
+  90           29            0            0  HIST
+  91           13            0            0  HIST
+  92           34            0            0  HIST
+  93            0            0            0  HIST
   94            1            0            0  HIST
-  95            6            0            0  HIST
-  96     10988714            0            0  HIST
-  97      4399554            0            0  HIST
-  98      2645000            0            0  HIST
-  99          209            0            0  HIST
- 100           42            0            0  HIST
- 101          432            0            0  HIST
- 102      5369071            0            0  HIST
- 103      8378384            0            0  HIST
- 104      4225445            0            0  HIST
- 105           76            0            0  HIST
-channel 0: range  87 -105, jitter  18    HIST
+  95           11            0            0  HIST
+  96     13767653            0            0  HIST
+  97      3405522            0            0  HIST
+  98       894827            0            0  HIST
+  99          185            0            0  HIST
+ 100           53            0            0  HIST
+ 101           11            0            0  HIST
+ 102            0            0            0  HIST
+ 103            0            0            0  HIST
+ 104            0            0            0  HIST
+ 105          670            0            0  HIST
+ 106     11636575            0            0  HIST
+ 107      5372569            0            0  HIST
+ 108       928824            0            0  HIST
+channel 0: range  90 -108, jitter  18    HIST
 channel 1: range   0 -  0, jitter   0    HIST
 channel 2: range   0 -  0, jitter   0    HIST
