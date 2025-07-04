@@ -59,7 +59,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-#define BUS_DETACH
+//#define BUS_DETACH
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -123,7 +123,8 @@ static const int      resetPin = 46;
 static const int      resetMask = 1 << (resetPin - 32); 
 #endif
 static const int      mpdPin = 46;  // active low
-static const int      mpdMask = 1 << (mpdPin - 32); 
+static const int      mpdShift = (mpdPin - 32);
+static const int      mpdMask = 1 << mpdShift; 
 static const int      extSel_Pin = 47; // active high 
 static const int      extSel_PortPin = extSel_Pin - 32 /* port1 pin*/;
 static const int      extSel_Mask = (1 << extSel_PortPin);
@@ -145,7 +146,7 @@ static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
 static const int bankShift = 16 - bankBits;
 
-#define RAM_VOLATILE volatile
+#define RAM_VOLATILE //volatile
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
@@ -645,9 +646,13 @@ struct {
 } busMon;
 #endif
 
-
+#if 1
 volatile uint32_t busEnableClearBits = dataMask;
 volatile uint32_t busEnableSetBits = dataMask | mpdMask | extSel_Mask;
+#else
+uint32_t busEnableClearBits = dataMask;
+uint32_t busEnableSetBits = dataMask | mpdMask | extSel_Mask;
+#endif
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
@@ -812,7 +817,7 @@ void IRAM_ATTR core0Loop() {
         }
 #ifndef FAKE_CLOCK
         if (1) {  
-            //volatile
+            volatile
             PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
             
             if (pbiRequest->req != 0) {
@@ -846,10 +851,11 @@ void IRAM_ATTR core0Loop() {
                     } 
                     structLogs.opens.add(filename);
                     //structLogs.ziocb.add(*atariMem.ziocb);
-                    //structLogs.iocb.add(*iocb);
+                    //
                     fakeFile.open(filename);
 #else
                     fakeFile.open();
+                    structLogs.iocb.add(*iocb);
 #endif
                     pbiRequest->carry = 1; 
                 } else if (pbiRequest->cmd == 2) { // close
@@ -1663,6 +1669,7 @@ void IRAM_ATTR iloop_bitResponse() {
 #include "hal/gpio_ll.h"
 #include "rom/gpio.h"
 
+volatile uint32_t busControlBits = mpdMask | extSel_Mask;
 
 void IRAM_ATTR iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
@@ -1679,29 +1686,18 @@ void IRAM_ATTR iloop_pbi() {
     uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
-    REG_WRITE(GPIO_ENABLE1_W1TS_REG, busEnableSetBits); 
+    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
-    //uint32_t gpio1OutClearMask = 0;
-    //uint32_t gpio1OutSetMask = mpdMask | extSel_Mask;
     uint8_t currentD1FF = 0;
 
-    //int mpdActive = 0; // if this is bool the compiler does some WEIRD stuff with timing(?) 
+    uint32_t bcb = busControlBits;
+
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        __asm__ __volatile__ ("nop");
-        __asm__ __volatile__ ("nop");
-        //uint32_t busEnClearBits = busEnableClearBits;
-        //uint32_t busEnSetBits = busEnableSetBits;
-
-        __asm__ __volatile__ ("");
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
-        __asm__ __volatile__ ("");
-        const int mpdActive = (currentD1FF == 1);            
-        __asm__ __volatile__ ("");
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
-        __asm__ __volatile__ ("");
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
  
         if ((r0 & readWriteMask) != 0) { // XXREAD
@@ -1710,51 +1706,48 @@ void IRAM_ATTR iloop_pbi() {
             const uint8_t data = *ramAddr;
             if ((r0 & casInh_Mask) != 0) {
                 //while(tscFall - XTHAL_GET_CCOUNT() < 60) {}
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask | mpdMask); //    enable DATA lines for output
+                REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | extSel_Mask | mpdMask);
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift)); 
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
             } else {
                 // ~80 cycles intermittently available here to do misc infrequent work 
             }
-            __asm__ __volatile__ ("");
-            if (mpdActive == true) { 
+            if (currentD1FF == 1) { 
                 REG_WRITE(GPIO_OUT1_W1TC_REG, mpdMask);
                 banks[0xd800 >> bankShift] = &pbiROM[0];
             } else {
-                REG_WRITE(GPIO_OUT1_W1TS_REG, mpdMask); 
+                REG_WRITE(GPIO_OUT1_W1TS_REG, mpdMask);
                 banks[0xd800 >> bankShift] = &atariRam[0xd800];
             }
-            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
+            while((dedic_gpio_cpu_ll_read_in()) == 0) {}
             //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
-            uint16_t addr = (r0 & addrMask) >> addrShift;
-            RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
-            __asm__ __volatile__ ("");
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {};
-            __asm__ __volatile__ ("nop"); 
-            #if 1
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            __asm__ __volatile__ ("nop"); 
-            #endif
-            //if (busEnSetBits != 0) {
-            //    ramAddr = &dummyStore;
-           
-            uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
-            //if ((r0 & (casInh_Mask)) == 0) // TODO this could trash ram behind mapped ROMS, break banking later   
-            //if (busEnSetBits != 0) 
-            *ramAddr = data;
-            if (addr == 0xd1ff) {
-                currentD1FF = data;
+            if ((bcb & extSel_Mask) != 0) {
+                uint16_t addr = (r0 & addrMask) >> addrShift;
+                RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
+                __asm__ __volatile__ (""); 
+                while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+                __asm__ __volatile__ (""); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                __asm__ __volatile__ ("nop"); 
+                uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
+                *ramAddr = data;
+                if (addr == 0xd1ff) {
+                    currentD1FF = data;
+                    //bcb ^= (currentD1FF << mpdShift); 
+                }
+            } else { 
+                while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             }
-            //}
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }
         //busMon.add(r0);
