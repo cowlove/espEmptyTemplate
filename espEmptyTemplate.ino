@@ -59,7 +59,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-#define BUS_DETACH
+//#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -169,19 +169,21 @@ DRAM_ATTR uint8_t diskImg[] = {
 };
 
 
-const int busEnableDelay = 100; // usec
+const int busEnableDelay = 1000; // usec
 
 volatile uint32_t busMask = dataMask;
 
 IRAM_ATTR void enableBus() { 
-    busMask = dataMask;
+    busMask = dataMask | extSel_Mask | mpdMask;
+    delayTicks(200);
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask);
     delayTicks(240 * busEnableDelay);
 }
 IRAM_ATTR void disableBus() {
-    busMask = 0;
-    REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
     delayTicks(240 * busEnableDelay);    
+    REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
+    delayTicks(200);
+    busMask = extSel_Mask | mpdMask;
 }
 
 std::string vsfmt(const char *format, va_list args);
