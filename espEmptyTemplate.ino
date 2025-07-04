@@ -929,6 +929,7 @@ void IRAM_ATTR core0Loop() {
                 enableBus();
                 #endif
                 pbiRequest->req = 0;
+                atariRam[0x0600] = 0;
             }
         }
 #endif

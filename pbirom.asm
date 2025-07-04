@@ -226,8 +226,9 @@ return_from_stackprog
 
 stack_res_wait
     sta ESP32_IOCB_REQ      // called with req value in A
+    sta $0600  // ESP32_IOCB_REQ      // called with req value in A
 stack_res_loop
-    lda ESP32_IOCB_REQ
+    lda $0600  // ESP32_IOCB_REQ
     bne stack_res_loop
     rts
 stack_res_wait_end
