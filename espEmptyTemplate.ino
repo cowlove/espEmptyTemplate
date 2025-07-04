@@ -158,6 +158,7 @@ IRAM_ATTR inline void delayTicks(int ticks) {
 
 
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
+DRAM_ATTR uint32_t bankEnabled[nrBanks] = {0x1};
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
 //#include "joust.h"
@@ -1713,10 +1714,11 @@ void IRAM_ATTR iloop_pbi() {
         uint32_t setMask = clrMask ^ (mpdMask | extSel_Mask);
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
- 
+        
+        // idea: have banksEnabled[] array so we can map in individual pages 
         if ((r0 & readWriteMask) == 0) { //////////////// XXWRITE /////////////    
-            uint16_t addr = (r0 & addrMask) >> addrShift;
-            dataDestOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask); 
+            uint16_t addr = (r0 & addrMask) >> addrShift; 
+            dataDestOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask);  
             int idx = (fetchedBusMask >> dataShift) & 1;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__ __volatile__("nop");
@@ -1728,11 +1730,15 @@ void IRAM_ATTR iloop_pbi() {
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
 
         } else { //////////////// XXR E A D /////////////    
-            int idx = ((r0 & casInh_Mask) >> casInh_Shift); // zero put
             busMaskOptions[1] = fetchedBusMask; // other option is 0 
-            REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMaskOptions[idx]); 
             uint16_t addr = (r0 & addrMask) >> addrShift;
-            RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
+            int bank = addr >> bankShift;
+            int idx = ((r0 & casInh_Mask) >> casInh_Shift);
+            //int idx = ((r0 & casInh_Mask) >> casInh_Shift) & bankEnabled[bank]; // clear busMask if we're not handling this read
+
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMaskOptions[idx]); 
+
+            RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
             uint8_t data = *ramAddr;
             REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | setMask); 
             
