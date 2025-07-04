@@ -130,6 +130,7 @@ static const int      extSel_Pin = 47; // active high
 static const int      extSel_PortPin = extSel_Pin - 32 /* port1 pin*/;
 static const int      extSel_Mask = (1 << extSel_PortPin);
 static const int      data0Pin = 38;
+static const int      data0Mask = (data0Pin - 32);
 static const int      data0PortPin = data0Pin - 32;
 static const int      dataShift = data0PortPin;
 static const int      dataMask = (0xff << dataShift);
@@ -175,14 +176,10 @@ volatile uint32_t busMask = dataMask;
 
 IRAM_ATTR void enableBus() { 
     busMask = dataMask | extSel_Mask | mpdMask;
-    delayTicks(200);
-    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask);
     delayTicks(240 * busEnableDelay);
 }
 IRAM_ATTR void disableBus() {
     delayTicks(240 * busEnableDelay);    
-    REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
-    delayTicks(200);
     busMask = extSel_Mask | mpdMask;
 }
 
@@ -1704,19 +1701,21 @@ void IRAM_ATTR iloop_pbi() {
     uint32_t clrMask = 0, setMask = mpdMask;  
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
+        #ifdef FAKE_CLOCK
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        const int mpdSelect = (atariRam[0xd1ff] & 1);
+        #endif
+        int mpdSelect = (atariRam[0xd1ff] & 1);
+        uint32_t fetchedBusMask = busMask;
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
-        clrMask = (mpdSelect << mpdShift);
-        setMask = clrMask ^ mpdMask;
+        clrMask = (mpdSelect << mpdShift) | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
+        setMask = clrMask ^ (mpdMask | extSel_Mask);
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
-        const uint32_t fetchedBusMask = busMask;
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         uint32_t r1;
  
         if ((r0 & readWriteMask) == 0 && (fetchedBusMask & dataMask) != 0) {
             //////////////// XXWRITE /////////////    
-            const uint16_t addr = (r0 & addrMask) >> addrShift;
+            uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__ __volatile__ ("nop"); 
@@ -1746,7 +1745,7 @@ void IRAM_ATTR iloop_pbi() {
         } else {   
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
         }
-        busMon.add(r0);
+        //busMon.add(r0);
 #ifdef FAKE_CLOCK // add profiling for bench timing runs 
         //profilers[0].add(tscFall - lastTscFall);  
         //lastTscFall = tscFall;
