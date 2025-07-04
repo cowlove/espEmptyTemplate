@@ -59,7 +59,7 @@ unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
-#define BUS_DETACH
+//#define BUS_DETACH
 
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
@@ -147,13 +147,15 @@ static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
 static const int bankShift = 16 - bankBits;
 
+IRAM_ATTR inline void delayTicks(int ticks) { 
+    uint32_t startTsc = XTHAL_GET_CCOUNT();
+    while(XTHAL_GET_CCOUNT() - startTsc < ticks) {}
+}
+
 #define BUSCTL_VOLATILE //volatile
-// to disable the bus, set busEnable to 0 and mask off the data lines;
-BUSCTL_VOLATILE uint32_t busEnable = 1;
-BUSCTL_VOLATILE uint32_t busMask = (dataMask | casInh_Mask | mpdMask);
-
-
 #define RAM_VOLATILE //volatile
+
+
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
@@ -165,6 +167,22 @@ DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024] = {
 DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
+
+
+const int busEnableDelay = 100; // usec
+
+volatile uint32_t busMask = dataMask;
+
+IRAM_ATTR void enableBus() { 
+    busMask = dataMask;
+    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask);
+    delayTicks(240 * busEnableDelay);
+}
+IRAM_ATTR void disableBus() {
+    busMask = 0;
+    REG_WRITE(GPIO_OUT1_W1TC_REG, extSel_Mask);
+    delayTicks(240 * busEnableDelay);    
+}
 
 std::string vsfmt(const char *format, va_list args);
 std::string sfmt(const char *format, ...);
@@ -296,12 +314,6 @@ volatile int cumulativeResets = 0;
 volatile int currentResetValue = 1;
 
 DRAM_ATTR volatile int core1Reg = 0;
-
-
-IRAM_ATTR inline void delayTicks(int ticks) { 
-    uint32_t startTsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - startTsc < ticks) {}
-}
 
 volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
 int maxElapsed1 = 0, maxElapsed2 = 0;
@@ -675,6 +687,8 @@ void IRAM_ATTR core0Loop() {
     uint8_t ledColor[3] = {0,0,0};
     uint32_t *psramPtr = psram;
 
+    enableBus();
+
     while(1) {
         uint32_t stsc;
         if (1) { // slow loop down to 1ms
@@ -826,10 +840,7 @@ void IRAM_ATTR core0Loop() {
                 
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
-                busEnable = 0;
-                busMask = extSel_Mask | mpdMask;
-                int busEnableDelay = 100; // usec
-                delayTicks(240 * busEnableDelay);
+                disableBus();
                 //diskReadCount = lfs_updateTestFile();
                 diskReadCount++;
                 #else
@@ -913,10 +924,7 @@ void IRAM_ATTR core0Loop() {
                     pbiRequest->carry = 0;
                 } 
                 #ifdef BUS_DETACH
-                // Re-enable PBI device. 
-                busMask = dataMask | extSel_Mask | mpdMask;
-                busEnable = 1;
-                delayTicks(240 * busEnableDelay);
+                enableBus();
                 #endif
                 pbiRequest->req = 0;
             }
@@ -1689,52 +1697,49 @@ void IRAM_ATTR iloop_pbi() {
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
-    static  struct {
-        BUSCTL_VOLATILE uint32_t clrBits;
-        BUSCTL_VOLATILE uint32_t setBits;
-        RAM_VOLATILE uint8_t * const bank;
-    } busCtlMux[2] = {
-        { .clrBits = (dataMask),           .setBits = (extSel_Mask | mpdMask), .bank = &atariRam[0xd000] }, 
-        { .clrBits = (dataMask | mpdMask), .setBits = (extSel_Mask)          , .bank = &pbiROM[0]}
-    };
-
+    RAM_VOLATILE uint8_t * const bankD800[2] = { &atariRam[0xd800], &pbiROM[0] };
+    uint32_t clrMask = 0, setMask = mpdMask;  
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        const int busBitMuxIndex = atariRam[0xd1ff] & 1;
+        const int mpdSelect = (atariRam[0xd1ff] & 1);
+        clrMask = (mpdSelect << mpdShift);
+        setMask = clrMask ^ mpdMask;
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
-        REG_WRITE(GPIO_OUT1_W1TC_REG, busCtlMux[busBitMuxIndex].clrBits);
+        const uint32_t fetchedBusMask = busMask;
+        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         uint32_t r1;
  
-        if ((r0 & readWriteMask) == 0 && busEnable) {
+        if ((r0 & readWriteMask) == 0 && (fetchedBusMask & dataMask) != 0) {
             //////////////// WRITE /////////////    
-            uint16_t addr = (r0 & addrMask) >> addrShift;
+            const uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__ __volatile__ ("nop"); 
             __asm__ __volatile__ ("nop");
+            __asm__ __volatile__ ("nop"); 
+            __asm__ __volatile__ ("nop");
+            __asm__ __volatile__ ("nop"); 
+            __asm__ __volatile__ ("nop");
+            __asm__ __volatile__ ("nop"); 
+            __asm__ __volatile__ ("nop");
             r1 = REG_READ(GPIO_IN1_REG); 
-            *ramAddr = r1 >> dataShift;
- 
-
+            *ramAddr = (r1 >> dataShift);
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
 
-        } else if ((r0 & (readWriteMask | casInh_Mask)) == (readWriteMask | casInh_Mask)) {
+        } else if ((r0 & readWriteMask) != 0) {
             //////////////// R E A D /////////////    
-            //uint32_t maskMux[2] = { extSel_Mask | mpdMask, dataMask | extSel_Mask | mpdMask };
-            //const int idx = ((r0 & casInh_Mask) >> casInh_Shift) & 1;
 
-            REG_WRITE(GPIO_ENABLE1_W1TS_REG, (dataMask | casInh_Mask | mpdMask));//  busMask);
-            //REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMask); // XXX investigate- completely breaks timing
+            if ((r0 & casInh_Mask) != 0)
+                REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask); 
             uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[addr >> bankShift] + (addr & ~bankMask);
             const uint8_t data = *ramAddr;
-            REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | busCtlMux[busBitMuxIndex].setBits); 
+            REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | setMask); 
             
-            banks[0xd800 >> bankShift] = busCtlMux[busBitMuxIndex].bank;
-
-
+            banks[0xd800 >> bankShift] = bankD800[mpdSelect];
+            
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}
             //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
         
