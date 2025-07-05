@@ -1730,7 +1730,8 @@ void IRAM_ATTR iloop_pbi() {
             dataDestOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask);  
             int idx = (fetchedBusMask >> dataShift) & 1;
             uint8_t *storeAddr = dataDestOptions[idx];
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+            //while((dedic_gpio_cpu_ll_read_in()) == 0) {};
+            __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
