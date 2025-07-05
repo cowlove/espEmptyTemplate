@@ -1,3 +1,4 @@
+#pragma GCC optimize("O1")
 #ifndef CSIM
 #include <esp_intr_alloc.h>
 #include <rtc_wdt.h>
@@ -40,6 +41,10 @@
 using std::vector;
 using std::string;
 #include "ascii2keypress.h"
+
+
+#include "core1.h" 
+
 // Usable pins
 // 0-18 21            (20)
 // 38-48 (6-16)     (11)
@@ -56,6 +61,8 @@ using std::string;
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
+
+#if 0
 static const struct {
 //XOPTS    
 //#define FAKE_CLOCK
@@ -142,20 +149,23 @@ static const uint32_t copyMpdMask = 0x40000000;
 static const uint32_t copyDataShift = 22;
 static const uint32_t copyDataMask = 0xff << copyDataShift;
 
+#if 0
 static const int bankBits = 5;
 static const int nrBanks = 1 << bankBits;
 static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
 static const int bankShift = 16 - bankBits;
+#endif 
+
+
+#define BUSCTL_VOLATILE //volatile
+#define RAM_VOLATILE //volatile
+#endif
 
 IRAM_ATTR inline void delayTicks(int ticks) { 
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < ticks) {}
 }
-
-#define BUSCTL_VOLATILE //volatile
-#define RAM_VOLATILE //volatile
-
 
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
 DRAM_ATTR uint32_t bankEnabled[nrBanks] = {0x1};
@@ -255,6 +265,8 @@ int lfs_updateTestFile() {
     return boot_count;
 }
 #endif
+
+#if 0 
 // TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
 // TODO: maybe eventually need to drive PBI interrupt pin 
 // TODO: so eventaully looks like: pin 0 = reset, pin 19 = casInh input, pin 20 = interrupt, pin 47 = MPD
@@ -269,23 +281,11 @@ int lfs_updateTestFile() {
 //                               | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
 static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
 static const int ledPin = 48;
-
+#endif
 #define PACK(r0, r1) (((r1 & 0x0001ffc0) << 15) | ((r0 & 0x0007fffe) << 2)) 
 
 volatile uint32_t *gpio0 = (volatile uint32_t *)GPIO_IN_REG;
 volatile uint32_t *gpio1 = (volatile uint32_t *)GPIO_IN1_REG;
-
-#if 1
-#undef REG_READ
-#undef REG_WRITE
-#if 1
-#define REG_READ(r) (*((volatile uint32_t *)r))
-#define REG_WRITE(r,v) do { *((volatile uint32_t *)r) = (v); } while(0)
-#else
-#define REG_READ(r) (*((uint32_t *)r))
-#define REG_WRITE(r,v) do { *((uint32_t *)r) = (v); } while(0)
-#endif 
-#endif 
 
 int psram_sz = 6 * 1024 * 1024;
 uint32_t *psram;
@@ -435,6 +435,7 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     return true;
 }
 
+#if 0 
 struct Hist2 { 
     static const int maxBucket = 512; // must be power of 2
     int buckets[maxBucket];
@@ -447,7 +448,7 @@ struct Hist2 {
     }
     void clear() { for(int i = 0; i < maxBucket; i++) buckets[i] = 0; }
 };
-
+#endif
 
 struct AtariIOCB { 
     uint8_t ICHID,  // handler 
@@ -479,7 +480,7 @@ const struct AtariDefStruct {
     int NEWPORT = 0x31ff;
 } AtariDef;
 
-static const int numProfilers = 3;
+//static const int numProfilers = 3;
 DRAM_ATTR Hist2 profilers[numProfilers];
 int ramReads = 0, ramWrites = 0;
 
@@ -668,15 +669,10 @@ int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
 volatile int diskReadCount = 0;
 
-
-
-#define USE_PRAGMA
-#ifdef USE_PRAGMA
-#pragma GCC optimize("O1") // O2 or above for core0Loop makes weird timings, improbably low core1 loop iterations around 60-70 cycles
-#endif
-
 // Apparently can't make any function calls from the core0 loops, even inline.  Otherwise it breaks 
 // timing on the core1 loop
+
+
 void IRAM_ATTR core0Loop() { 
     int elapsedSec = 0;
     int pi = 0;
@@ -829,7 +825,6 @@ void IRAM_ATTR core0Loop() {
             if (p >= psram + psram_sz / sizeof(uint32_t))
                 p = psram;
         }
-#ifndef FAKE_CLOCK
         if (1) {  
             volatile
             PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
@@ -928,7 +923,6 @@ void IRAM_ATTR core0Loop() {
                 //atariRam[0x0600] = 0;
             }
         }
-#endif
 #if 0 
         //cycleCount++;
         if (psramLoopCount != *drLoopCount) {
@@ -1005,9 +999,6 @@ void IRAM_ATTR core0Loop() {
     }
 }
 
-#ifdef USE_PRAGMA
-#pragma GCC pop_options
-#endif
 
 void threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
@@ -1673,6 +1664,7 @@ void IRAM_ATTR iloop_bitResponse() {
 // TODO shadow writes to ROM areas into atariRam[] so we can later reference PORTB bank bits 
 // TODO need to eventually manage the MPD output bit 
 
+#if 0 
 #include "soc/gpio_struct.h"
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_sig_map.h"
@@ -1684,8 +1676,10 @@ void IRAM_ATTR iloop_bitResponse() {
 #else
 #define PROFILE(a, b) do {} while(0)
 #endif
+#endif 
 
-void IRAM_ATTR iloop_pbi() {
+
+void IRAM_ATTR iloop_pbi_OLD() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
     };
@@ -1708,6 +1702,7 @@ void IRAM_ATTR iloop_pbi() {
     uint8_t * dataDestOptions[2] = { &dummyStore, &dummyStore };
     uint32_t busMaskOptions[2] = { 0, 0 }; 
 
+
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         #ifdef FAKE_CLOCK
@@ -1716,14 +1711,14 @@ void IRAM_ATTR iloop_pbi() {
         int mpdSelect = (atariRam[0xd1ff] & 1);
         busMaskOptions[1] = busMask;
         const uint32_t &fetchedBusMask = busMaskOptions[1];
-        __asm__ __volatile__("");
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
         uint32_t clrMask = (mpdSelect << mpdShift) | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
         //uint32_t clrMask = (mpdSelect << mpdShift) | ((busMaskOptions[1] & data0Mask) << (extSel_Pin - data0Pin));
         uint32_t setMask = clrMask ^ (mpdMask | extSel_Mask);
+
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
-        
+
         // idea: have banksEnabled[] array so we can map in individual pages 
         if ((r0 & readWriteMask) == 0) { //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift; 
@@ -1749,7 +1744,6 @@ void IRAM_ATTR iloop_pbi() {
             int idx = ((r0 & casInh_Mask) >> casInh_Shift);
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMaskOptions[idx]);
 #endif
-
             uint16_t addr = (r0 & addrMask) >> addrShift;
             int bank = addr >> bankShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
@@ -1885,8 +1879,10 @@ void IRAM_ATTR iloop_timings2() {
 }
 
 void loop() {
+
     while(1) { yield(); delay(1); }
-    if (0)  { // TMP demonstrate use of usb d-/+ pins 19,20 as input, demonstrate neopixel LED
+#if 0
+     if (0)  { // TMP demonstrate use of usb d-/+ pins 19,20 as input, demonstrate neopixel LED
         int toggle = 0;
         pinMode(19, INPUT);
         pinMode(20, INPUT);
@@ -1945,6 +1941,7 @@ void loop() {
         yield(); 
         delay(1000); 
     }
+#endif
 }
 
 static void IRAM_ATTR app_cpu_main() {
@@ -1952,7 +1949,7 @@ static void IRAM_ATTR app_cpu_main() {
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi;  // saves 5 cycles, could save more 
     __asm__ __volatile__("rsil %0, 15" : "=r"(oldint) : : );
-    iloop_pbi();    
+    iloop_pbi();
     while(1) {}
 }
 
