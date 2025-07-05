@@ -1730,14 +1730,12 @@ void IRAM_ATTR iloop_pbi() {
             //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
 
         } else { //////////////// XXR E A D /////////////    
-            busMaskOptions[1] = fetchedBusMask; // other option is 0 
+            if ((r0 & casInh_Mask) != 0)
+                REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask); 
             uint16_t addr = (r0 & addrMask) >> addrShift;
             int bank = addr >> bankShift;
-            int idx = ((r0 & casInh_Mask) >> casInh_Shift);
+            //int idx = ((r0 & casInh_Mask) >> casInh_Shift);
             //int idx = ((r0 & casInh_Mask) >> casInh_Shift) & bankEnabled[bank]; // clear busMask if we're not handling this read
-
-            REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMaskOptions[idx]); 
-
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
             uint8_t data = *ramAddr;
             REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | setMask); 
