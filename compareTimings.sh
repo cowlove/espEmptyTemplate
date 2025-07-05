@@ -5,5 +5,7 @@ stdbuf -o0 make \
     u1c | stdbuf -i0 -o0 cat_until "DONE" | tee cat.timings.out
 
 grep HIST cat.timings.out  > timing.txt
-gnuplot -e "set term dumb; plot 'timing_committed.txt' u 1:2 w l, 'timing.txt' u 1:2 w l;"
+gnuplot -e "set term dumb; plot 'timing_committed.txt' u 1:2 w l, 'timing_committed.txt' u 1:3 w l, 'timing.txt' u 1:2 w l, 'timing.txt' u 1:3 w l;"
+
+#gnuplot -e "set term dumb; plot 'timing_committed.txt' u 1:2 w l, 'timing.txt' u 1:2 w l;"
 

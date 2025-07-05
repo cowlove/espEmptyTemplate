@@ -1452,14 +1452,15 @@ void setup() {
         ledcAttachChannel(clockPin, testFreq, 1, 0);
         ledcWrite(clockPin, 1);
 
-        if(1) {
-            pinMode(readWritePin, OUTPUT);
-            digitalWrite(readWritePin, 0);
-            ledcAttachChannel(readWritePin, testFreq / 8, 1, 2);
-            ledcWrite(readWritePin, 1);
-        } else { 
-            pinMode(readWritePin, INPUT_PULLUP);
-        }
+        pinMode(readWritePin, OUTPUT);
+        digitalWrite(readWritePin, 0);
+        ledcAttachChannel(readWritePin, testFreq / 4, 1, 2);
+        ledcWrite(readWritePin, 1);
+
+        pinMode(casInh_pin, OUTPUT);
+        digitalWrite(casInh_pin, 0);
+        ledcAttachChannel(casInh_pin, testFreq / 2, 1, 4);
+        ledcWrite(casInh_pin, 1);
 
 #if 1
         // write 0xd1ff to address pins to simulate worst-case slowest address decode
@@ -1470,7 +1471,7 @@ void setup() {
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(mpdPin, INPUT_PULLDOWN);
         pinMode(refreshPin, INPUT_PULLUP);
-        pinMode(casInh_pin, INPUT_PULLUP);
+        //pinMode(casInh_pin, INPUT_PULLUP);
         pinMode(extSel_Pin, INPUT_PULLUP);
     }
     //pinMode(ledPin, OUTPUT);
@@ -1678,6 +1679,12 @@ void IRAM_ATTR iloop_bitResponse() {
 #include "hal/gpio_ll.h"
 #include "rom/gpio.h"
 
+#ifdef FAKE_CLOCK
+#define PROFILE(a, b) profilers[a].add(b)
+#else
+#define PROFILE(a, b) do {} while(0)
+#endif
+
 void IRAM_ATTR iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
@@ -1707,10 +1714,12 @@ void IRAM_ATTR iloop_pbi() {
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         #endif
         int mpdSelect = (atariRam[0xd1ff] & 1);
-        uint32_t fetchedBusMask = busMask;
+        busMaskOptions[1] = busMask;
+        const uint32_t &fetchedBusMask = busMaskOptions[1];
         __asm__ __volatile__("");
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
         uint32_t clrMask = (mpdSelect << mpdShift) | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
+        //uint32_t clrMask = (mpdSelect << mpdShift) | ((busMaskOptions[1] & data0Mask) << (extSel_Pin - data0Pin));
         uint32_t setMask = clrMask ^ (mpdMask | extSel_Mask);
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
@@ -1720,37 +1729,36 @@ void IRAM_ATTR iloop_pbi() {
             uint16_t addr = (r0 & addrMask) >> addrShift; 
             dataDestOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask);  
             int idx = (fetchedBusMask >> dataShift) & 1;
+            uint8_t *storeAddr = dataDestOptions[idx];
             while((dedic_gpio_cpu_ll_read_in()) == 0) {};
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
-            *dataDestOptions[idx] = (r1 >> dataShift);
-            //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall); 
+            *storeAddr = (r1 >> dataShift);
+            PROFILE(0, XTHAL_GET_CCOUNT() - tscFall); 
 
         } else { //////////////// XXR E A D /////////////    
-            if ((r0 & casInh_Mask) != 0)
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask); 
+#if 1
+            if ((r0 & casInh_Mask) != 0) 
+                REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask);
+#else
+            // why is this so slow 
+            int idx = ((r0 & casInh_Mask) >> casInh_Shift);
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMaskOptions[idx]);
+#endif
+
             uint16_t addr = (r0 & addrMask) >> addrShift;
             int bank = addr >> bankShift;
-            //int idx = ((r0 & casInh_Mask) >> casInh_Shift);
-            //int idx = ((r0 & casInh_Mask) >> casInh_Shift) & bankEnabled[bank]; // clear busMask if we're not handling this read
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
             uint8_t data = *ramAddr;
             REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | setMask); 
             
             banks[0xd800 >> bankShift] = bankD800[mpdSelect];
-            
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {}
-            //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
+            PROFILE(1, XTHAL_GET_CCOUNT() - tscFall); 
+            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
         } 
-        //busMon.add(r0);
-#ifdef FAKE_CLOCK // add profiling for bench timing runs 
-        //profilers[0].add(tscFall - lastTscFall);  
-        //lastTscFall = tscFall;
-        profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
-#endif
     } while(1);
 }
 
