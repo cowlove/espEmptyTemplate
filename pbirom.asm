@@ -179,6 +179,18 @@ PBI_WAITREQ
     jsr SAFE_WAIT
 #endif
 
+    // save and then mask interrupts
+    php 
+    plp 
+    sta ESP32_IOCB_6502PSP
+
+    lda #$40 // TODO find the NMIEN shadow register and restore proper value
+    sta ESP32_IOCB_NMIEN
+
+    sei 
+    lda #$00
+    sta NMIEN
+
     // only page 0xd800 is remapped now.  copy out changed memory locations and make
     // remap call to restore normal esp32 RAM
     // The remap call leaves the results portion of the ESP32_IOCB unchanged 
@@ -194,17 +206,6 @@ PBI_WAITREQ
     sta ESP32_IOCB_LOC004E
     lda $4f
     sta ESP32_IOCB_LOC004F
-
-    php 
-    plp 
-    sta ESP32_IOCB_6502PSP
-
-    lda #$40 // TODO find the NMIEN shadow register and restore proper value
-    sta ESP32_IOCB_NMIEN
-
-    sei 
-    lda #$00
-    sta NMIEN
 
     lda #9 // remap command
     STA ESP32_IOCB_CMD
