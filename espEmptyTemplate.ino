@@ -62,106 +62,6 @@ using std::string;
 
 unsigned IRAM_ATTR my_nmi(unsigned x) { return 0; }
 
-#if 0
-static const struct {
-//XOPTS    
-//#define FAKE_CLOCK
-//#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
-
-#ifdef FAKE_CLOCK
-   bool fakeClock     = 1; 
-   float histRunSec   = 20;
-#else 
-   bool fakeClock     = 0;
-   float histRunSec   = -20;
-#endif 
-   bool testPins      = 0;
-   bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
-   bool dumpSram      = 0;   ;
-   bool timingTest    = 0;
-   bool bitResponse   = 0;
-   bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
-   bool dumpPsram     = 0;
-   bool forceMemTest  = 0;
-#define PBI_DEVICE
-#ifdef PBI_DEVICE
-   bool logicAnalyzer = 0;
-   bool maskCore0Int  = 1;
-   bool busAnalyzer   = 0;
-   bool tcpSendPsram  = 0;
-   bool histogram     = 1;
-   bool pbiDevice     = 1;
-#else
-   bool logicAnalyzer = 0;
-   bool pbiDevice     = 0;
-   bool maskCore0Int  = 0;
-   bool busAnalyzer   = 1;
-   bool tcpSendPsram  = 1;
-   bool histogram     = 0;
-#endif
-} opt;
-
-struct Pin {
-    int gpionum;
-    int bitlen;
-    inline const int regRd() { return gpionum > 31 ? GPIO_IN1_REG : GPIO_IN_REG; }
-    inline const int regWr() { return gpionum > 31 ? GPIO_IN1_REG : GPIO_IN_REG; }
-    Pin(int n, int len = 1) : gpionum(n), bitlen(len) {}
-    uint32_t const mask() { return ((1 << bitlen) - 1) << shift(); }
-    int const shift() { return gpionum & 31; }
-};
-
-//GPIO0 pins
-static const int      casInh_pin = 0;
-static const int      casInh_Shift = casInh_pin;
-static const int      casInh_Mask = (0x1 << casInh_pin);               // pin 0 
-static const int      clockPin = 1;
-static const int      clockMask = (0x1 << clockPin);
-static const int      addr0Pin = 2;
-static const int      addrShift = addr0Pin;                   // bus address - pins 1-16
-static const int      addrMask = 0xffff << addrShift;  // 
-static const int      refreshPin = 21;
-static const int      refreshMask = (1 << refreshPin);
-static const int      readWritePin = 18;
-static const int      readWriteMask = (1 << readWritePin); 
-
-//GPIO1 pins
-#ifdef HAVE_RESET_PIN
-static const int      resetPin = 46;
-static const int      resetMask = 1 << (resetPin - 32); 
-#endif
-static const int      mpdPin = 46;  // active low
-static const int      mpdShift = (mpdPin - 32);
-static const int      mpdMask = 1 << mpdShift; 
-static const int      extSel_Pin = 47; // active high 
-static const int      extSel_PortPin = extSel_Pin - 32 /* port1 pin*/;
-static const int      extSel_Mask = (1 << extSel_PortPin);
-static const int      data0Pin = 38;
-static const int      data0Mask = (data0Pin - 32);
-static const int      data0PortPin = data0Pin - 32;
-static const int      dataShift = data0PortPin;
-static const int      dataMask = (0xff << dataShift);
-
-#ifdef HAVE_RESET_PIN
-static const uint32_t copyResetMask = 0x40000000;
-#endif
-static const uint32_t copyMpdMask = 0x40000000;
-static const uint32_t copyDataShift = 22;
-static const uint32_t copyDataMask = 0xff << copyDataShift;
-
-#if 0
-static const int bankBits = 5;
-static const int nrBanks = 1 << bankBits;
-static const int bankSize = 64 * 1024 / nrBanks;
-static const uint16_t bankMask = 0xffff0000 >> bankBits;
-static const int bankShift = 16 - bankBits;
-#endif 
-
-
-#define BUSCTL_VOLATILE //volatile
-#define RAM_VOLATILE //volatile
-#endif
-
 IRAM_ATTR inline void delayTicks(int ticks) { 
     uint32_t startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < ticks) {}
@@ -179,7 +79,6 @@ DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024] = {
 DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
-
 
 volatile uint32_t busMask = dataMask;
 
@@ -280,22 +179,6 @@ int lfs_updateTestFile() {
 }
 #endif
 
-#if 0 
-// TODO: try pin 19,20 (USB d- d+ pins). Move reset to 0 so ESP32 boot doesnt get messed up by low signal   
-// TODO: maybe eventually need to drive PBI interrupt pin 
-// TODO: so eventaully looks like: pin 0 = reset, pin 19 = casInh input, pin 20 = interrupt, pin 47 = MPD
-// TODO: although USB pins moving during ESP32 boot might cause conflict 
-// TODO: extend this generally, need to review which ESP32 pins are driven during boot or have strapping resistors   
-//
-//                               +--casInh_ / ROM read
-//                               | +---Clock
-//                               | | +--- ADDR                               +-- RW
-//                               | | |                                       |  +-- refresh in              +--MPD out
-//                               | | |                                       |  |   +---DATA                |  +-- ext sel out 
-//                               | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
-static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
-static const int ledPin = 48;
-#endif
 #define PACK(r0, r1) (((r1 & 0x0001ffc0) << 15) | ((r0 & 0x0007fffe) << 2)) 
 
 volatile uint32_t *gpio0 = (volatile uint32_t *)GPIO_IN_REG;
@@ -368,6 +251,7 @@ void IRAM_ATTR simulateI2c() {
 }
 
 void IRAM_ATTR NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
+#if 0 
     //busyWaitCCount(100);
     //return;       
     uint32_t stsc;
@@ -401,12 +285,12 @@ void IRAM_ATTR NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val,
             i++;
         }
     }
+    #endif
 }
 
 //  socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
 #if 0
-    //neopixelWrite(ledPin, 0, 0, 8);
     //char *host = "10.250.250.240";
     char *host = "192.168.68.131";
     ////WiFi.begin("Station54", "Local1747"); host = "10.250.250.240";
@@ -416,7 +300,6 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     WiFiClient wc;
     static const int txSize = 1024;
    
-    neopixelWrite(ledPin, 8, 0, 8);
     int r = wc.connect(host, 9999);
     printf("connect() returned %d\n", r);
     uint32_t startMs = millis();
@@ -438,13 +321,11 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
             printf("."); 
             fflush(stdout);
         }
-        neopixelWrite(ledPin, 0, 0, (count & 127) + 8);
         if (resetWdt) wdtReset();
         yield();
     }
     printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
     fflush(stdout);
-    neopixelWrite(ledPin, 0, 8, 0);
 #endif
     return true;
 }
@@ -735,36 +616,6 @@ void IRAM_ATTR core0Loop() {
             lfs_updateTestFile();
             #endif
         }
-        if (0) {
-            //rgb[0]++;
-            int longCycles = 175;
-            int shortCycles = 90;
-            uint32_t bitMask = 1 << (ledPin - 32); 
-            for (int col = 0; col < 3; col++) {
-                for (int bit = 0; bit < 8; bit++) {
-                    if (((ledColor[col] >> 2)& (1 << (7 - bit)))) {
-                        // HIGH bit
-                        //REG_WRITE(GPIO_OUT1_W1TS_REG, bitMask);
-                        dedic_gpio_cpu_ll_write_all(1);
-                        stsc = XTHAL_GET_CCOUNT();
-                        while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
-
-                        dedic_gpio_cpu_ll_write_all(0);
-                        stsc = XTHAL_GET_CCOUNT();
-                        while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
-                    } else {
-                        // LOW bit
-                        dedic_gpio_cpu_ll_write_all(1);
-                        stsc = XTHAL_GET_CCOUNT();
-                        while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
-
-                        dedic_gpio_cpu_ll_write_all(0);
-                        stsc = XTHAL_GET_CCOUNT();
-                        while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
-                    }
-                }
-            }
-        }
 
 #ifdef FAKE_CLOCK
         if (0) { 
@@ -1033,8 +884,6 @@ void IRAM_ATTR core0Loop() {
             }
             if ((psramLoopCount & 127) == 1) {
                 int b = (psramLoopCount >> 4) & 127;
-                //rgbLedWriteBitBang(ledPin, b, b, 0);
-                //neopixelWrite(ledPin, b, b, 0);
             }
             if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
         }
@@ -1043,21 +892,6 @@ void IRAM_ATTR core0Loop() {
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
             
-#if 0 
-            if (opt.core0Led) { 
-                if (elapsedSec & 1) {
-                    int cycles = (volatile int)ramReads;
-                    if (cycles - lastCycleCount > 1700000) {
-                        NEWneopixelWrite(ledPin, 0, 22, 0);
-                    } else { 
-                        NEWneopixelWrite(ledPin, 0, 0, 0);
-                    }
-                    lastCycleCount = cycles;
-                } else { 
-                    NEWneopixelWrite(ledPin, 22, 0, 0);
-                }
-            }
-#endif
 #ifndef FAKE_CLOCK
             if (elapsedSec == 10) { 
                 addSimKeypress("   \233E.\"J\233                         \233RUN\233\233DOS\233");
@@ -1114,28 +948,6 @@ void IRAM_ATTR core0Loop() {
 void threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
 
-    pinMode(ledPin, OUTPUT);
-    digitalWrite(ledPin, 0);
-
-    if(1) { 
-        int bundleB_gpios[] = {ledPin};
-        dedic_gpio_bundle_config_t bundleB_config = {
-            .gpio_array = bundleB_gpios,
-            .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
-            .flags = {
-                .out_en = 1
-            },
-        };
-        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
-        for(int i = 0; i < sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]); i++) { 
-            //gpio_set_drive_capability((gpio_num_t)bundleB_gpios[i], GPIO_DRIVE_CAP_MAX);
-        }
-    }
-
-    NEWneopixelWrite(ledPin,25,25,25);
-    delay(100);
-    NEWneopixelWrite(ledPin,0,0,0);
-
     volatile int *drLoopCount = &dramLoopCount;
     async_memcpy_config_t config {
         .backlog = dma_bufs - 2,
@@ -1148,8 +960,6 @@ void threadFunc(void *) {
         printf("Failed to install async memcpy driver.\n");
         return;
     }
-
-    //neopixelWrite(ledPin, 0, 8, 0);
 
     if (0) { 
 
@@ -1199,7 +1009,6 @@ void threadFunc(void *) {
     printf("Total samples %lld implies %.2f sec sampling. Total reads %d\n",
         totalEvents, 1.0 * totalEvents / 1.8 / 1000000, ramReads);
 
-    NEWneopixelWrite(ledPin, 8, 0, 0);
     printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x %d minLoop %d maxLoop %d jit %d late %d\n", 
         millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc, minLoopE, 
         maxLoopE, maxLoopE - minLoopE, loopElapsedLate);
@@ -1274,7 +1083,6 @@ void threadFunc(void *) {
         yield();
         h = v;
         printf("Done writing to flash\n"); 
-        //neopixelWrite(ledPin, 0, 0, 8);
 #endif 
     }
     
@@ -1349,7 +1157,6 @@ void threadFunc(void *) {
         //printf("CORE0 idle\n");
         delay(10); 
         yield();
-        NEWneopixelWrite(ledPin, 0, 0, ((millis() / 100) % 2) * 10);
     }
 }
 
@@ -1424,17 +1231,6 @@ void setup() {
 #endif
 
 
-    if (0) { 
-        pinMode(ledPin, OUTPUT);
-        digitalWrite(ledPin, 0);
-        int color = 0;
-        while(1) {
-            //printf("neopixel\n");
-            NEWneopixelWrite(ledPin, 0,0,color++ % 63);
-            delay(10);
-            if (millis() > 2000) break;
-        }
-    }
 
 #if 0
     if (opt.histogram) { 
@@ -1516,15 +1312,6 @@ void setup() {
             },
         };
         ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleIn));
-        if (0) { 
-            int bundleB_gpios[] = {ledPin};
-            dedic_gpio_bundle_config_t bundleB_config = {
-                .gpio_array = bundleB_gpios,
-                .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
-                .flags = { .out_en = 1 },
-            };
-            ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
-        }
     } else { 
         // pbi device - only monitor one pin so we don't have to mask bits after reading dedic_io
         int bundleA_gpios[] = {clockPin};
@@ -1537,15 +1324,6 @@ void setup() {
             },
         };
         ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleIn));
-        if (0) { 
-            int bundleB_gpios[] = {ledPin};
-            dedic_gpio_bundle_config_t bundleB_config = {
-                .gpio_array = bundleB_gpios,
-                .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
-                .flags = { .out_en = 1 },
-            };
-            ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
-        }
     }
 
     if (opt.bitResponse) { // can't use direct GPIO_ENABLE or GPIO_OUT registers after setting up dedic_gpio_bundle 
@@ -1586,8 +1364,6 @@ void setup() {
         //pinMode(casInh_pin, INPUT_PULLUP);
         pinMode(extSel_Pin, INPUT_PULLUP);
     }
-    //pinMode(ledPin, OUTPUT);
-    //digitalWrite(ledPin, 1);
 
     if (opt.pbiDevice) { 
         pinMode(extSel_Pin, OUTPUT);
@@ -1808,7 +1584,6 @@ void IRAM_ATTR iloop_timings1() {
     for(int i = 0; i < iterations; i++) { // loop overhead 4 cycles 
 
         XTHAL_GET_CCOUNT();                      // 1 cycle
-        //neopixelWrite(ledPin, 8, 0, 8);          // 20000 cycles
         //REG_WRITE(GPIO_ENABLE_W1TC, 0x1);
         __asm__ __volatile__("nop"); // 1 cycle
         REG_WRITE(GPIO_OUT_REG, 0x1);                   //    18 cycles 
@@ -1929,9 +1704,7 @@ void loop() {
         int toggle = 0;
         pinMode(19, INPUT);
         pinMode(20, INPUT);
-        //pinMode(ledPin, OUTPUT);
         while(1) {
-            //(ledPin, toggle * 8, digitalRead(19) * 32, digitalRead(20) * 32);
             toggle = !toggle;
             yield();
             delay(10);

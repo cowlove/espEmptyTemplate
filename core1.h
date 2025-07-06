@@ -43,7 +43,7 @@ static const struct {
    bool dumpSram      = 0;   ;
    bool timingTest    = 0;
    bool bitResponse   = 0;
-   bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including ledPin
+   bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including 
    bool dumpPsram     = 0;
    bool forceMemTest  = 0;
 #define PBI_DEVICE
@@ -118,15 +118,15 @@ static const uint32_t copyDataMask = 0xff << copyDataShift;
 // TODO: although USB pins moving during ESP32 boot might cause conflict 
 // TODO: extend this generally, need to review which ESP32 pins are driven during boot or have strapping resistors   
 //
-//                               +--casInh_ / ROM read
-//                               | +---Clock
-//                               | | +--- ADDR                               +-- RW
-//                               | | |                                       |  +-- refresh in              +--MPD out
+//                               +--Clock
+//                               | +---Refresh
+//                               | | +--- ADDR                               +-- CasInhAL
+//                               | | |                                       |  +-- Read                    +--MPD out
 //                               | | |                                       |  |   +---DATA                |  +-- ext sel out 
 //                               | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
 using std::vector;
-static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
-static const int ledPin = 48;
+static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47,48};
+//static const int led_NO_Pin = -1;
 
 static const int bankBits = 5;
 static const int nrBanks = 1 << bankBits;
