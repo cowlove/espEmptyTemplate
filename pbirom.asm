@@ -6,6 +6,7 @@ GENDEV  =   $E48F
 HATABS  =   $031A   ;Device handler table
 CRITIC  =   $42     ;Critical code section flag
 DEVNAM  =   'J
+RTCLOK  =   $12
 
 NEWDEV  =   $E486
 
@@ -45,6 +46,14 @@ ESP32_IOCB_Y
 ESP32_IOCB_CMD
     .byt $ee     ;  CMD 
 ESP32_IOCB_CARRY
+    .byt $ee
+ESP32_IOCB_CRITIC
+    .byt $ee
+ESP32_IOCB_RTCLOK1
+    .byt $ee
+ESP32_IOCB_RTCLOK2
+    .byt $ee
+ESP32_IOCB_RTCLOK3
     .byt $ee
 
 TEST_ENTRY
@@ -138,6 +147,8 @@ PBI_ALL
     sta ESP32_IOCB_CMD
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y
+    lda CRITIC
+    sta ESP32_IOCB_CRITIC
 
     ///////////////////////////////////////////////////
     // TODO: replace this PBI_WAITREQ loop with:
@@ -155,6 +166,20 @@ PBI_WAITREQ
     // OPTION 2
     jsr SAFE_WAIT
 #endif
+
+    // only page 0xd800 is remapped now.  copy out changed memory locations and make
+    // remap call to restore normal esp32 RAM
+    // The remap call leaves the results portion of the ESP32_IOCB unchanged 
+    lda RTCLOK
+    sta ESP32_IOCB_RTCLOK1
+    lda RTCLOK + 1
+    sta ESP32_IOCB_RTCLOK1 + 1
+    lda RTCLOK + 2
+    sta ESP32_IOCB_RTCLOK1 + 2
+    lda #9 // remap command
+    STA ESP32_IOCB_CMD
+    lda #1
+    jsr SAFE_WAIT
 
     lda ESP32_IOCB_CARRY
     ror  
@@ -229,6 +254,7 @@ stack_res_wait
     //sta $0600  // ESP32_IOCB_REQ      // called with req value in A
 stack_res_loop
     //lda $0600  // ESP32_IOCB_REQ
+    //sta ESP32_IOCB_UNUSED
     lda ESP32_IOCB_REQ
     bne stack_res_loop
     rts

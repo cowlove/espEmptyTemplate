@@ -52,11 +52,12 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     gpio_matrix_in(casInh_pin,    CORE1_GPIO_IN7_IDX, false);
     const uint8_t dedicBankMask = 0xfc;
     const uint8_t dedicBankShift = 2;
+    const uint8_t dedicClockMask = 0x1;
 
-    while((dedic_gpio_cpu_ll_read_in() & 1) == 0) {}
-    while((dedic_gpio_cpu_ll_read_in() & 1) != 0) {}
+    while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) == 0) {}
+    while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) != 0) {}
     uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
-    while((dedic_gpio_cpu_ll_read_in() & 1) == 0) {}
+    while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) == 0) {}
 
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
@@ -66,11 +67,12 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     static uint8_t dummyStore;
  
     do {    
-        while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}
+        while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) != 0) {}
         #ifdef FAKE_CLOCK
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         #endif
         int mpdSelect = (atariRam[0xd1ff] & 1);
+        // TODO: busMask isn't used any more, but preserve ENABLE1 timings when removing 
         const uint32_t fetchedBusMask = busMask;
         uint32_t clrMask = (mpdSelect << mpdShift);// | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
         uint32_t setMask = clrMask ^ (mpdMask | extSel_Mask);
@@ -79,12 +81,15 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         __asm__ __volatile__("nop");
         // Timing critical point.  At >= 10 ticks to before the REG_WRITE 
         //PROFILE(2, XTHAL_GET_CCOUNT() - tscFall); 
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
+        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
-        int bx = (dedic_gpio_cpu_ll_read_in() & dedicBankMask) >> dedicBankShift;
+        // TODO: we could rearrange the address pins with casInh_pin directly above
+        // addrPin15 so that we could just mask and shift r0 instead of using dedic_
+        // to remap the order for us.  Looks like it would save a cycle 
+        //int bx = (r0 & 0xf0) >> 4; // timing approximateion
+        int bx = (dedic_gpio_cpu_ll_read_in()) >> dedicBankShift;
         const uint32_t pinEnableMask = bankEnable[bx];
         
-        // idea: have banksEnabled[] array so we can map in individual pages 
         if ((r0 & (readWriteMask)) != 0) {
 #if 1
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);
@@ -100,7 +105,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);             
             PROFILE(1, XTHAL_GET_CCOUNT() - tscFall); 
 
-            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}
+            while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) == 0) {}
         
         } else { //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift; 
@@ -108,7 +113,10 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             if ((pinEnableMask & extSel_Mask) != extSel_Mask)
                 storeAddr = &dummyStore;
 
-            while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}
+            while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) == 0) {}
+#ifdef BUS_MONITOR
+            busMon.add(r0);
+#else
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
@@ -125,6 +133,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
+#endif
             PROFILE(0, XTHAL_GET_CCOUNT() - tscFall); 
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
             *storeAddr = (r1 >> dataShift);

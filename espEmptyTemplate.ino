@@ -184,11 +184,25 @@ DRAM_ATTR uint8_t diskImg[] = {
 volatile uint32_t busMask = dataMask;
 
 IRAM_ATTR void enableBus() { 
+    for(int i = 0; i < nrBanks; i++) { 
+            bankEnable[i] = mpdMask | extSel_Mask;
+            bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask;
+    }
     busMask = dataMask | extSel_Mask | mpdMask;
     delayTicks(240 * 100);
 }
+
+IRAM_ATTR void enableSingleBank(int b) {
+    bankEnable[b] = mpdMask | extSel_Mask;
+    bankEnable[b + nrBanks] = dataMask | mpdMask | extSel_Mask;
+}
+
 IRAM_ATTR void disableBus() {
     delayTicks(240 * 100);    
+    for(int i = 0; i < nrBanks; i++) { 
+            bankEnable[i] = mpdMask;
+            bankEnable[i + nrBanks] = mpdMask;
+    }
     busMask = extSel_Mask | mpdMask;
 }
 
@@ -589,6 +603,10 @@ struct PbiIocb {
     uint8_t y;
     uint8_t cmd;
     uint8_t carry;
+    uint8_t critic;
+    uint8_t rtclok1;
+    uint8_t rtclok2;
+    uint8_t rtclok3;
 };
 
 template<class T> 
@@ -612,9 +630,11 @@ template <> void StructLog<string>::printEntry(const string &a) { printf("%s\n",
 struct { 
     StructLog<AtariDCB> dcb; 
     StructLog<AtariIOCB> iocb; 
+    StructLog<PbiIocb> pbi; 
     StructLog<AtariIOCB> ziocb; 
     StructLog<string> opens;
     void print() {
+        printf("PBI log:\n"); pbi.print();
         printf("DCB log:\n"); dcb.print();
         printf("IOCB log:\n"); iocb.print();
         printf("ZIOCB log:\n"); ziocb.print();
@@ -646,31 +666,6 @@ DiskImage atariDisks[8] = {
     {"none", (DiskImage::DiskImageRawData *)diskImg}, 
 };
 
-//#define BUS_MONITOR
-#ifdef BUS_MONITOR
-DRAM_ATTR class BusMonitor { 
-    static const int size = 2048; // must be power of 2
-    volatile int head;
-    int tail;
-    uint32_t r0hist[size];//, r1hist[size];
-public:
-    IRAM_ATTR inline void add(uint32_t r0) { //, uint32_t r1) {
-        r0hist[head] = r0; //r1hist[head] = r1;
-        head = (head + 1) & (size - 1);
-    }
-    IRAM_ATTR bool available() { return head != tail; }
-    IRAM_ATTR uint32_t get() { 
-        uint32_t rval = r0hist[tail];
-        tail = (tail + 1) & (size - 1); 
-    }
-} busMon;
-#else
-struct {
-    IRAM_ATTR inline void add(uint32_t) {}
-    IRAM_ATTR inline uint32_t get() { return 0; }
-    IRAM_ATTR inline bool available() { return false; }
-} busMon;
-#endif
 
 
 int maxBufsUsed = 0;
@@ -689,6 +684,18 @@ void IRAM_ATTR core0Loop() {
     uint8_t ledColor[3] = {0,0,0};
     uint32_t *psramPtr = psram;
 
+#ifdef BUS_MONITOR
+    if(1) {
+        busMon.matchMask = readWriteMask;
+        busMon.matchValue = 0;
+        busMon.enable = false;
+        // zero out counters for bus monitor
+        for(int i = 0; i < sizeof(atariRam); i++) { 
+            psram[i] = 0;
+        }
+    }
+#endif
+
     enableBus();
 
     while(1) {
@@ -700,6 +707,15 @@ void IRAM_ATTR core0Loop() {
         if (0) { 
             while(busMon.available() && pi < psram_sz / sizeof(psram[0])) { 
             psram[pi++] = busMon.get(); 
+            }
+        }
+        if (0) { 
+            while(busMon.available()) { 
+                uint32_t v = busMon.get();
+                if (busMon.enable) {//&& (v & busMon.matchMask) == busMon.matchValue) {
+                    uint16_t addr = (v & addrMask) >> addrShift;
+                    psram[addr]++;
+                } 
             }
         }
         if (0) {
@@ -831,11 +847,13 @@ void IRAM_ATTR core0Loop() {
                 p = psram;
         }
         if (1) {  
-            volatile
+            //volatile
             PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
             
             if (pbiRequest->req != 0) {
-                
+                busMon.enable = true;
+                structLogs.pbi.add(*pbiRequest);
+                while(busMon.available()) { busMon.get(); }                
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
                 disableBus();
@@ -849,9 +867,11 @@ void IRAM_ATTR core0Loop() {
                 ledColor[0] += 2;
                 ledColor[2] += 1;
                 AtariIOCB *iocb = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + pbiRequest->x]; // todo validate x bounds
-                pbiRequest->y = 1; // assume success
-                pbiRequest->carry = 0; // assume fail 
+                //pbiRequest->y = 1; // assume success
+                //pbiRequest->carry = 0; // assume fail 
                 if (pbiRequest->cmd == 1) { // open
+                    pbiRequest->y = 1; // assume success
+                    pbiRequest->carry = 0; // assume fail 
                     uint16_t addr = ((uint16_t )atariMem.ziocb->ICBAH) << 8 | atariMem.ziocb->ICBAL;
 #ifdef SIM_KEYPRESS_FILE
                     string filename;
@@ -870,8 +890,10 @@ void IRAM_ATTR core0Loop() {
 #endif
                     pbiRequest->carry = 1; 
                 } else if (pbiRequest->cmd == 2) { // close
+                    pbiRequest->y = 1; // assume success
                     pbiRequest->carry = 1; 
                 } else if (pbiRequest->cmd == 3) { // get
+                    pbiRequest->y = 1; // assume success
                     int c = fakeFile.get();
                     if (c < 0) 
                         pbiRequest->y = 136;
@@ -879,13 +901,20 @@ void IRAM_ATTR core0Loop() {
                         pbiRequest->a = c; 
                     pbiRequest->carry = 1; 
                 } else if (pbiRequest->cmd == 4) { // put
+                    pbiRequest->y = 1; // assume success
                     if (fakeFile.put(pbiRequest->a) < 0)
                         pbiRequest->y = 136;
                     pbiRequest->carry = 1; 
                 } else if (pbiRequest->cmd == 5) { // status 
+                    pbiRequest->y = 1; // assume success
+                    pbiRequest->carry = 0; // assume fail 
                 } else if (pbiRequest->cmd == 6) { // special 
+                    pbiRequest->y = 1; // assume success
+                    pbiRequest->carry = 0; // assume fail 
                 } else if (pbiRequest->cmd == 7) { // low level io, see DCB
 #ifdef ENABLE_SIO
+                    pbiRequest->y = 1; // assume success
+                    pbiRequest->carry = 0; // assume fail 
                     AtariDCB *dcb = atariMem.dcb;
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
                     int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
@@ -919,11 +948,35 @@ void IRAM_ATTR core0Loop() {
                     }
 #endif // ENABLE_SIO 
                 } else if (pbiRequest->cmd == 8) { // IRQ
+                    pbiRequest->y = 1; // assume success
                     pbiRequest->carry = 0;
+                } else if (pbiRequest->cmd == 9) { // REMAP
+                    atariRam[0x0012] = pbiRequest->rtclok1;
+                    atariRam[0x0013] = pbiRequest->rtclok2;
+                    atariRam[0x0014] = pbiRequest->rtclok3;
+                    #ifdef BUS_DETACH
+                    enableBus();
+                    #endif
                 } 
+
+                // TODO:  enableSingleBank(0xd800>>bankShift), then return and let
+                // the 6502 copy out critical memory locations to struct, 
+                // then 6502 make another pbiReq->cmd == remap to tidy up
+                // changed ram locations and remap esp32 ram
+                //
+                // alternatively, if its only the clock locations that are changed,
+                // maybe just fake them and don't bother with a two-stage completion process  
+
                 #ifdef BUS_DETACH
-                enableBus();
+                enableSingleBank(0xd800 >> bankShift);
                 #endif
+                busMon.enable = false;
+                while(busMon.available()) { 
+                    uint32_t v = busMon.get();
+                    uint16_t addr = (v & addrMask) >> addrShift;
+                    psram[addr]++;
+                } 
+           
                 pbiRequest->req = 0;
                 //atariRam[0x0600] = 0;
             }
@@ -980,6 +1033,9 @@ void IRAM_ATTR core0Loop() {
                 addSimKeypress("   \233E.\"J\233                         \233RUN\233\233DOS\233");
                 simulatedKeysAvailable = 1;
                 //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
+                //for(int i = 0; i < sizeof(atariRam); i++) { 
+                //    psram[i] = 0;
+                //}
             }
 #endif
             if (elapsedSec == 1) { 
@@ -1216,19 +1272,26 @@ void threadFunc(void *) {
     printf("pbiROM[0x100] = %d\n", pbiROM[0x100]);
     printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
     printf("diskIoCount %d\n", diskReadCount);
-    printf("GIT: " GIT_VERSION "\n");
+    structLogs.print();
     printf("Page 6: ");
     for(int i = 0x600; i < 0x620; i++) { 
         printf("%02x ", atariRam[i]);
     }
     printf("\n0xd1ff: %02x\n", atariRam[0xd1ff]);
     printf("0xd820: %02x\n", atariRam[0xd820]);
-    
+#ifdef BUS_MONITOR
+    printf("Bus Monitor:\n");
+    for(int i = 0; i < sizeof(atariRam); i++) { 
+        if (psram[i] != 0 && (i < 0x100 || i > 0x1ff)) {
+            printf("%05d %d BMON\n", i, psram[i]);
+        }
+    }  
+#endif 
+    printf("GIT: " GIT_VERSION "\n");
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
     
     //ESP.restart();
-    structLogs.print();
     printf("CORE0 idle\n");
     while(1) { 
         //printf("CORE0 idle\n");
@@ -1575,6 +1638,7 @@ void IRAM_ATTR iloop_logicAnalyzer() {
     }
 }
         
+DRAM_ATTR BusMonitor busMon;
 
 void IRAM_ATTR iloop_busMonitor() {	
     uint32_t *out = dram;

@@ -25,12 +25,12 @@ void IRAM_ATTR iloop_pbi();
 //GPIO0 bits: TODO rearrange bits so addr is in low bits and avoids needed a shift
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
-#if 1 
-static const struct {
 //XOPTS    
+#define BUS_MONITOR
 //#define FAKE_CLOCK
 //#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 
+static const struct {
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
    float histRunSec   = 10;
@@ -128,14 +128,12 @@ using std::vector;
 static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47};
 static const int ledPin = 48;
 
-#endif
 static const int bankBits = 5;
 static const int nrBanks = 1 << bankBits;
 static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
 static const int bankShift = 16 - bankBits;
 
-#if 1 
 #define BUSCTL_VOLATILE //volatile
 #define RAM_VOLATILE //volatile
 
@@ -146,9 +144,7 @@ extern DRAM_ATTR RAM_VOLATILE uint8_t cartROM[];
 extern DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024];
 
 extern volatile uint32_t busMask;
-#endif 
 
-#if 1 
 struct Hist2 { 
     static const int maxBucket = 512; // must be power of 2
     int buckets[maxBucket];
@@ -170,8 +166,6 @@ extern DRAM_ATTR Hist2 profilers[numProfilers];
 #define PROFILE(a, b) do {} while(0)
 #endif
 
-#endif
-
 #if 1
 #undef REG_READ
 #undef REG_WRITE
@@ -184,3 +178,36 @@ extern DRAM_ATTR Hist2 profilers[numProfilers];
 #endif 
 #endif 
 
+#ifdef BUS_MONITOR
+class BusMonitor { 
+    static const int size = 4096; // must be power of 2
+    int head = 0;
+    int tail = 0;
+    uint32_t r0hist[size];//, r1hist[size];
+public:
+    bool enable = false;
+    uint32_t matchMask;
+    uint32_t matchValue;
+    IRAM_ATTR inline void add(uint32_t r0) { //, uint32_t r1) {
+        r0hist[head] = r0; //r1hist[head] = r1;
+        head = (head + 1) & (size - 1);
+    }
+    IRAM_ATTR bool available() { return head != tail; }
+    IRAM_ATTR uint32_t get() { 
+        uint32_t rval = r0hist[tail];
+        tail = (tail + 1) & (size - 1); 
+        return rval;
+    }
+};
+#else
+struct BusMonitor {
+    bool enable = true;
+    uint32_t matchMask;
+    uint32_t matchValue;
+    IRAM_ATTR inline void add(uint32_t) {}
+    IRAM_ATTR inline uint32_t get() { return 0; }
+    IRAM_ATTR inline bool available() { return false; }
+}; 
+#endif
+
+extern DRAM_ATTR BusMonitor busMon;
