@@ -36,7 +36,7 @@ static const struct {
    float histRunSec   = 10;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = -20;
+   float histRunSec   = -30;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -137,10 +137,10 @@ static const int bankShift = 16 - bankBits;
 
 #if 1 
 #define BUSCTL_VOLATILE //volatile
-#define RAM_VOLATILE //volatile
+#define RAM_VOLATILE volatile
 
 extern DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
-extern DRAM_ATTR uint32_t bankEnabled[nrBanks];
+extern DRAM_ATTR uint8_t bankEnabled[nrBanks];
 extern DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024];
 extern DRAM_ATTR RAM_VOLATILE uint8_t cartROM[];
 extern DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024];

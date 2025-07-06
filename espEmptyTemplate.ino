@@ -168,7 +168,7 @@ IRAM_ATTR inline void delayTicks(int ticks) {
 }
 
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
-DRAM_ATTR uint32_t bankEnabled[nrBanks] = {0x1};
+DRAM_ATTR uint8_t bankEnabled[nrBanks] = {0x1};
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
 //#include "joust.h"
@@ -1216,7 +1216,8 @@ void threadFunc(void *) {
     for(int i = 0x600; i < 0x620; i++) { 
         printf("%02x ", atariRam[i]);
     }
-    printf("\n");
+    printf("\n0xd1ff: %02x\n", atariRam[0xd1ff]);
+    printf("0xd820: %02x\n", atariRam[0xd820]);
     
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
@@ -1449,9 +1450,9 @@ void setup() {
         ledcWrite(readWritePin, 1);
 
         pinMode(casInh_pin, OUTPUT);
-        digitalWrite(casInh_pin, 0);
-        ledcAttachChannel(casInh_pin, testFreq / 2, 1, 4);
-        ledcWrite(casInh_pin, 1);
+        digitalWrite(casInh_pin, 1);
+        //ledcAttachChannel(casInh_pin, testFreq / 2, 1, 4);
+        //ledcWrite(casInh_pin, 1);
 
 #if 1
         // write 0xd1ff to address pins to simulate worst-case slowest address decode
@@ -1677,85 +1678,6 @@ void IRAM_ATTR iloop_bitResponse() {
 #define PROFILE(a, b) do {} while(0)
 #endif
 #endif 
-
-
-void IRAM_ATTR iloop_pbi_OLD() {
-    for(int i = 0; i < nrBanks; i++) {
-        banks[i] = &atariRam[64 * 1024 / nrBanks * i];
-    };
-
-
-    for(auto i : pins) gpio_ll_input_enable(NULL, i);
-    gpio_matrix_in(clockPin, CORE1_GPIO_IN0_IDX, false);
-
-    while((dedic_gpio_cpu_ll_read_in()) == 0) {}
-    while((dedic_gpio_cpu_ll_read_in()) != 0) {}
-    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
-    while((dedic_gpio_cpu_ll_read_in()) == 0) {}
-
-    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
-    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
-
-    RAM_VOLATILE uint8_t * const bankD800[2] = { &atariRam[0xd800], &pbiROM[0] };
-
-    static uint8_t dummyStore;
-    uint8_t * dataDestOptions[2] = { &dummyStore, &dummyStore };
-    uint32_t busMaskOptions[2] = { 0, 0 }; 
-
-
-    do {    
-        while((dedic_gpio_cpu_ll_read_in()) != 0) {}
-        #ifdef FAKE_CLOCK
-        uint32_t tscFall = XTHAL_GET_CCOUNT();
-        #endif
-        int mpdSelect = (atariRam[0xd1ff] & 1);
-        busMaskOptions[1] = busMask;
-        const uint32_t &fetchedBusMask = busMaskOptions[1];
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
-        uint32_t clrMask = (mpdSelect << mpdShift) | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
-        //uint32_t clrMask = (mpdSelect << mpdShift) | ((busMaskOptions[1] & data0Mask) << (extSel_Pin - data0Pin));
-        uint32_t setMask = clrMask ^ (mpdMask | extSel_Mask);
-
-        REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask | clrMask);
-        uint32_t r0 = REG_READ(GPIO_IN_REG);
-
-        // idea: have banksEnabled[] array so we can map in individual pages 
-        if ((r0 & readWriteMask) == 0) { //////////////// XXWRITE /////////////    
-            uint16_t addr = (r0 & addrMask) >> addrShift; 
-            dataDestOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask);  
-            int idx = (fetchedBusMask >> dataShift) & 1;
-            uint8_t *storeAddr = dataDestOptions[idx];
-            //while((dedic_gpio_cpu_ll_read_in()) == 0) {};
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            uint32_t r1 = REG_READ(GPIO_IN1_REG); 
-            *storeAddr = (r1 >> dataShift);
-            PROFILE(0, XTHAL_GET_CCOUNT() - tscFall); 
-
-        } else { //////////////// XXR E A D /////////////    
-#if 1
-            if ((r0 & casInh_Mask) != 0) 
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask);
-#else
-            // why is this so slow 
-            int idx = ((r0 & casInh_Mask) >> casInh_Shift);
-            REG_WRITE(GPIO_ENABLE1_W1TS_REG, busMaskOptions[idx]);
-#endif
-            uint16_t addr = (r0 & addrMask) >> addrShift;
-            int bank = addr >> bankShift;
-            RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
-            uint8_t data = *ramAddr;
-            REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift) | setMask); 
-            
-            banks[0xd800 >> bankShift] = bankD800[mpdSelect];
-            PROFILE(1, XTHAL_GET_CCOUNT() - tscFall); 
-            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
-        } 
-    } while(1);
-}
 
 void IRAM_ATTR iloop_timings1() {
     static const int iterations = 1000000; 
