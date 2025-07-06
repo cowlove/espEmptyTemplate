@@ -168,7 +168,7 @@ IRAM_ATTR inline void delayTicks(int ticks) {
 }
 
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
-DRAM_ATTR uint8_t bankEnabled[nrBanks] = {0x1};
+DRAM_ATTR uint32_t bankEnable[nrBanks * 2] = {0x0};
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
 DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
 //#include "joust.h"

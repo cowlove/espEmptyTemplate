@@ -32,29 +32,24 @@
 
 #pragma GCC optimize("O3")
 
-DRAM_ATTR uint32_t bEnabled[nrBanks * 2] = {1};
-
 void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
     };
-    for(int i = 0; i < nrBanks * 2; i++) {
-        if ((i & 1) == 0) {
-            bEnabled[i] = mpdMask | extSel_Mask;
-        } else { 
-            bEnabled[i] = dataMask | mpdMask | extSel_Mask;
-        }
+    for(int i = 0; i < nrBanks; i++) {
+        bankEnable[i] = mpdMask | extSel_Mask; 
+        bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask;
     };
     //atariRam[0xd803] = 0x00;
 
     for(auto i : pins) gpio_ll_input_enable(NULL, i);
     gpio_matrix_in(clockPin,      CORE1_GPIO_IN0_IDX, false);
-    gpio_matrix_in(casInh_pin,    CORE1_GPIO_IN2_IDX, false);
-    gpio_matrix_in(addr0Pin + 11, CORE1_GPIO_IN3_IDX, false);
-    gpio_matrix_in(addr0Pin + 12, CORE1_GPIO_IN4_IDX, false);
-    gpio_matrix_in(addr0Pin + 13, CORE1_GPIO_IN5_IDX, false);
-    gpio_matrix_in(addr0Pin + 14, CORE1_GPIO_IN6_IDX, false);
-    gpio_matrix_in(addr0Pin + 15, CORE1_GPIO_IN7_IDX, false);
+    gpio_matrix_in(addr0Pin + 11, CORE1_GPIO_IN2_IDX, false);
+    gpio_matrix_in(addr0Pin + 12, CORE1_GPIO_IN3_IDX, false);
+    gpio_matrix_in(addr0Pin + 13, CORE1_GPIO_IN4_IDX, false);
+    gpio_matrix_in(addr0Pin + 14, CORE1_GPIO_IN5_IDX, false);
+    gpio_matrix_in(addr0Pin + 15, CORE1_GPIO_IN6_IDX, false);
+    gpio_matrix_in(casInh_pin,    CORE1_GPIO_IN7_IDX, false);
     const uint8_t dedicBankMask = 0xfc;
     const uint8_t dedicBankShift = 2;
 
@@ -69,9 +64,6 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     RAM_VOLATILE uint8_t * const bankD800[2] = { &atariRam[0xd800], &pbiROM[0] };
 
     static uint8_t dummyStore;
-    RAM_VOLATILE uint8_t * dataDestOptions[2] = { &dummyStore, &dummyStore };
-    uint32_t busMaskOptions[2] = { 0, 0 }; 
-    const uint32_t enableClearMask = dataMask;
  
     do {    
         while((dedic_gpio_cpu_ll_read_in() & 0x1) != 0) {}
@@ -86,28 +78,21 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         __asm__ __volatile__("nop");
         __asm__ __volatile__("nop");
         // Timing critical point.  At >= 10 ticks to before the REG_WRITE 
+        //PROFILE(2, XTHAL_GET_CCOUNT() - tscFall); 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         int bx = (dedic_gpio_cpu_ll_read_in() & dedicBankMask) >> dedicBankShift;
-        const uint32_t pinEnableMask = bEnabled[bx];
+        const uint32_t pinEnableMask = bankEnable[bx];
         
         // idea: have banksEnabled[] array so we can map in individual pages 
         if ((r0 & (readWriteMask)) != 0) {
-            #if 0
-                int bank = (r0 & addrMask) >> (addrShift + bankShift - 1);
-                bank |= (r0 & casInh_Mask) >> casInh_Shift;
-                REG_WRITE(GPIO_ENABLE1_W1TS_REG, bEnabled[(r0 & casInh_Mask) >> casInh_Shift]);
-                bank = bank >> 1;
-            #else
-                if (1) {
-                    REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);
-                } else {
-                    if ((r0 & casInh_Mask) != 0) { 
-                        //REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask);
-                        REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);
-                    }
-                }
-            #endif
+#if 1
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);
+#else
+            if ((r0 & casInh_Mask) != 0) { 
+                //REG_WRITE(GPIO_ENABLE1_W1TS_REG, fetchedBusMask);
+            }
+#endif
             uint16_t addr = (r0 & addrMask) >> addrShift;
             int bank = addr >> bankShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
@@ -119,10 +104,10 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         
         } else { //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift; 
-            dataDestOptions[1] = banks[addr >> bankShift] + (addr & ~bankMask);  
-            int idx = (fetchedBusMask >> dataShift) & 1; // is bus disabled? 
-            RAM_VOLATILE uint8_t *storeAddr = dataDestOptions[idx];
-            
+            RAM_VOLATILE uint8_t *storeAddr = banks[addr >> bankShift] + (addr & ~bankMask);
+            if ((pinEnableMask & extSel_Mask) != extSel_Mask)
+                storeAddr = &dummyStore;
+
             while((dedic_gpio_cpu_ll_read_in() & 0x1) == 0) {}
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
