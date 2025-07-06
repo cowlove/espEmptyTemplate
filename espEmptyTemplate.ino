@@ -689,8 +689,10 @@ void IRAM_ATTR core0Loop() {
 
 #ifdef BUS_MONITOR
     if(1) {
-        busMon.matchMask = readWriteMask;
-        busMon.matchValue = 0;
+        //busMon.matchMask = 0xff00 << addrShift;
+        //busMon.matchValue = 0xd800 << addrShift;
+        busMon.matchMask = 0xf000 << addrShift;
+        busMon.matchValue = 0xd000 << addrShift;
         busMon.enable = false;
         // zero out counters for bus monitor
         for(int i = 0; i < sizeof(atariRam); i++) { 
@@ -979,8 +981,10 @@ void IRAM_ATTR core0Loop() {
                 busMon.enable = false;
                 while(busMon.available()) { 
                     uint32_t v = busMon.get();
-                    uint16_t addr = (v & addrMask) >> addrShift;
-                    psram[addr]++;
+                    if ((v & busMon.matchMask) == busMon.matchValue || (v & readWriteMask) == 0) {
+                        uint16_t addr = (v & addrMask) >> addrShift;
+                        psram[addr]++;
+                    }
                 } 
            
                 pbiRequest->req = 0;
@@ -1289,7 +1293,7 @@ void threadFunc(void *) {
     printf("Bus Monitor:\n");
     for(int i = 0; i < sizeof(atariRam); i++) { 
         if (psram[i] != 0 && (i < 0x100 || i > 0x1ff)) {
-            printf("%05d %d BMON\n", i, psram[i]);
+            printf("%05d %10d %04x %02x  BMON\n", i, psram[i], i, psram[i]);
         }
     }  
 #endif 

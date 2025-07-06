@@ -104,8 +104,11 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             uint8_t data = *ramAddr;
             REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);             
             PROFILE(1, XTHAL_GET_CCOUNT() - tscFall); 
+#ifdef BUS_MONITOR
+            busMon.add(r0);
+#endif
 
-            while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) == 0) {}
+            //while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) == 0) {}
         
         } else { //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift; 
