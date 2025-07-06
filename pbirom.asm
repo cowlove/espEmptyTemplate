@@ -7,6 +7,8 @@ HATABS  =   $031A   ;Device handler table
 CRITIC  =   $42     ;Critical code section flag
 DEVNAM  =   'J
 RTCLOK  =   $12
+NMIEN   =   $D40E
+
 
 NEWDEV  =   $E486
 
@@ -48,6 +50,10 @@ ESP32_IOCB_CMD
 ESP32_IOCB_CARRY
     .byt $ee
 ESP32_IOCB_CRITIC
+    .byt $ee
+ESP32_IOCB_6502PSP
+    .byt $ee
+ESP32_IOCB_NMIEN
     .byt $ee
 ESP32_IOCB_RTCLOK1
     .byt $ee
@@ -189,11 +195,29 @@ PBI_WAITREQ
     lda $4f
     sta ESP32_IOCB_LOC004F
 
+    php 
+    plp 
+    sta ESP32_IOCB_6502PSP
+
+    lda #$40 // TODO find the NMIEN shadow register and restore proper value
+    sta ESP32_IOCB_NMIEN
+
+    sei 
+    lda #$00
+    sta NMIEN
 
     lda #9 // remap command
     STA ESP32_IOCB_CMD
     lda #1
     jsr SAFE_WAIT
+
+    lda ESP32_IOCB_NMIEN
+    sta NMIEN
+    lda ESP32_IOCB_6502PSP
+    and #$02
+    bne NO_CLI
+    cli
+NO_CLI
 
     lda ESP32_IOCB_CARRY
     ror  

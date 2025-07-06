@@ -200,8 +200,8 @@ IRAM_ATTR void enableSingleBank(int b) {
 IRAM_ATTR void disableBus() {
     delayTicks(240 * 100);    
     for(int i = 0; i < nrBanks; i++) { 
-            bankEnable[i] = mpdMask;
-            bankEnable[i + nrBanks] = mpdMask;
+        bankEnable[i] = mpdMask;
+        bankEnable[i + nrBanks] = mpdMask;
     }
     busMask = extSel_Mask | mpdMask;
 }
@@ -604,6 +604,8 @@ struct PbiIocb {
     uint8_t cmd;
     uint8_t carry;
     uint8_t critic;
+    uint8_t psp;
+    uint8_t nmien;
     uint8_t rtclok1;
     uint8_t rtclok2;
     uint8_t rtclok3;
@@ -691,8 +693,12 @@ void IRAM_ATTR core0Loop() {
     if(1) {
         //busMon.matchMask = 0xff00 << addrShift;
         //busMon.matchValue = 0xd800 << addrShift;
-        busMon.matchMask = 0xf000 << addrShift;
-        busMon.matchValue = 0xd000 << addrShift;
+        
+        //busMon.matchMask = 0xf000 << addrShift;
+        //busMon.matchValue = 0xd000 << addrShift;
+
+        busMon.matchMask = (readWriteMask | casInh_Mask);
+        busMon.matchValue = 0;
         busMon.enable = false;
         // zero out counters for bus monitor
         for(int i = 0; i < sizeof(atariRam); i++) { 
@@ -714,17 +720,14 @@ void IRAM_ATTR core0Loop() {
             psram[pi++] = busMon.get(); 
             }
         }
-        if (0) { 
+        if (1) { 
             while(busMon.available()) { 
                 uint32_t v = busMon.get();
-                if (busMon.enable) {//&& (v & busMon.matchMask) == busMon.matchValue) {
+                if (busMon.enable && (v & busMon.matchMask) == busMon.matchValue) {
                     uint16_t addr = (v & addrMask) >> addrShift;
                     psram[addr]++;
                 } 
             }
-        }
-        if (0) {
-            memcpy(psram, (void *)atariRam, sizeof(atariRam));
         }
         if (0) {
             #ifdef FAKE_CLOCK
@@ -862,8 +865,7 @@ void IRAM_ATTR core0Loop() {
                 #ifdef BUS_DETACH
                 // Disable PBI memory device 
                 disableBus();
-                //diskReadCount = lfs_updateTestFile();
-                diskReadCount++;
+                diskReadCount = lfs_updateTestFile();
                 #else
                 diskReadCount++;
                 #endif 
@@ -978,10 +980,10 @@ void IRAM_ATTR core0Loop() {
                 #ifdef BUS_DETACH
                 enableSingleBank(0xd800 >> bankShift);
                 #endif
-                busMon.enable = false;
+                //busMon.enable = false;
                 while(busMon.available()) { 
                     uint32_t v = busMon.get();
-                    if ((v & busMon.matchMask) == busMon.matchValue || (v & readWriteMask) == 0) {
+                    if ((v & busMon.matchMask) == busMon.matchValue /*|| (v & readWriteMask) == 0*/) {
                         uint16_t addr = (v & addrMask) >> addrShift;
                         psram[addr]++;
                     }
@@ -1043,11 +1045,31 @@ void IRAM_ATTR core0Loop() {
                 addSimKeypress("   \233E.\"J\233                         \233RUN\233\233DOS\233");
                 simulatedKeysAvailable = 1;
                 //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
-                //for(int i = 0; i < sizeof(atariRam); i++) { 
-                //    psram[i] = 0;
-                //}
+                for(int i = 0; i < sizeof(atariRam); i++) { 
+                    psram[i] = 0;
+                }
             }
 #endif
+            if (1) { 
+                static int lastReads = 0;
+                static int secondsWithoutRead = 0;
+                if (diskReadCount == lastReads) { 
+                    secondsWithoutRead++;
+                } else { 
+                    secondsWithoutRead = 0;
+                }
+                lastReads = diskReadCount;
+                if (secondsWithoutRead == 5) { 
+                    for(int i = 0; i < sizeof(atariRam); i++) { 
+                            psram[i] = 0;
+                    }
+                }
+                if (secondsWithoutRead == 11) { 
+                    break;
+                }
+
+            }
+
             if (elapsedSec == 1) { 
                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
@@ -1293,10 +1315,12 @@ void threadFunc(void *) {
     printf("Bus Monitor:\n");
     for(int i = 0; i < sizeof(atariRam); i++) { 
         if (psram[i] != 0 && (i < 0x100 || i > 0x1ff)) {
-            printf("%05d %10d %04x %02x  BMON\n", i, psram[i], i, psram[i]);
+            printf("%05d %04x %10d      BMON\n", i, i, psram[i]);
         }
     }  
 #endif 
+    printf("busMask: %08x bus is %s\n", busMask, (busMask & dataMask) == dataMask ? "ENABLED" : "DISABLED");
+    
     printf("GIT: " GIT_VERSION "\n");
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);

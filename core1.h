@@ -26,9 +26,9 @@ void IRAM_ATTR iloop_pbi();
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
 //XOPTS    
-#define BUS_MONITOR
+//#define BUS_MONITOR
+#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 //#define FAKE_CLOCK
-//#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 
 static const struct {
 #ifdef FAKE_CLOCK
@@ -36,7 +36,7 @@ static const struct {
    float histRunSec   = 10;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = -30;
+   float histRunSec   = -60;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
