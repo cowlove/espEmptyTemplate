@@ -55,6 +55,12 @@ ESP32_IOCB_RTCLOK2
     .byt $ee
 ESP32_IOCB_RTCLOK3
     .byt $ee
+ESP32_IOCB_LOC004D
+    .byt $ee
+ESP32_IOCB_LOC004E
+    .byt $ee
+ESP32_IOCB_LOC004F
+    .byt $ee
 
 TEST_ENTRY
     PLA
@@ -176,6 +182,14 @@ PBI_WAITREQ
     sta ESP32_IOCB_RTCLOK1 + 1
     lda RTCLOK + 2
     sta ESP32_IOCB_RTCLOK1 + 2
+    lda $4d
+    sta ESP32_IOCB_LOC004D
+    lda $4e
+    sta ESP32_IOCB_LOC004E
+    lda $4f
+    sta ESP32_IOCB_LOC004F
+
+
     lda #9 // remap command
     STA ESP32_IOCB_CMD
     lda #1

@@ -607,6 +607,9 @@ struct PbiIocb {
     uint8_t rtclok1;
     uint8_t rtclok2;
     uint8_t rtclok3;
+    uint8_t loc004d;
+    uint8_t loc004e;
+    uint8_t loc004f;
 };
 
 template<class T> 
@@ -954,6 +957,9 @@ void IRAM_ATTR core0Loop() {
                     atariRam[0x0012] = pbiRequest->rtclok1;
                     atariRam[0x0013] = pbiRequest->rtclok2;
                     atariRam[0x0014] = pbiRequest->rtclok3;
+                    atariRam[0x004d] = pbiRequest->loc004d;
+                    atariRam[0x004e] = pbiRequest->loc004e;
+                    atariRam[0x004f] = pbiRequest->loc004f;
                     #ifdef BUS_DETACH
                     enableBus();
                     #endif
