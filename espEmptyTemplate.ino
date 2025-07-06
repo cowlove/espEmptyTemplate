@@ -516,7 +516,7 @@ int simulatedKeysAvailable = 0;
 #ifndef FAKE_CLOCK
 #define ENABLE_SIO
 #define SIM_KEYPRESS
-//#define SIM_KEYPRESS_FILE
+#define SIM_KEYPRESS_FILE
 #endif
 struct AtariIO {
     uint8_t buf[2048];
@@ -531,6 +531,14 @@ struct AtariIO {
     string filename;
     void open(const string &f) { 
         filename = f;
+        if (filename == "J:UNMAP") {
+            bankEnable[(0x8000>>bankShift)] = mpdMask;
+            bankEnable[(0x8000>>bankShift) + nrBanks] = mpdMask;
+        }
+        if (filename == "J:REMAP") {
+            bankEnable[(0x8000>>bankShift)] = mpdMask | extSel_Mask;
+            bankEnable[(0x8000>>bankShift) + nrBanks] = dataMask | mpdMask | mpdMask;
+        }
 #else 
     void open() { 
 #endif
@@ -792,14 +800,11 @@ void IRAM_ATTR core0Loop() {
             static uint32_t lastTsc;
             if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 200) {
                 lastTsc = XTHAL_GET_CCOUNT();
-                if (simulatedKeysAvailable) { 
-                    if (simulatedKeypressQueue.size() > 0) { 
-                        uint8_t c = simulatedKeypressQueue[0];
-                        simulatedKeypressQueue.erase(simulatedKeypressQueue.begin());
-                        if (c != 255) 
-                            atariRam[764] = ascii2keypress[c];
-                    }
-                    simulatedKeysAvailable = simulatedKeypressQueue.size() > 0;
+                if (simulatedKeypressQueue.size() > 0) { 
+                    uint8_t c = simulatedKeypressQueue[0];
+                    simulatedKeypressQueue.erase(simulatedKeypressQueue.begin());
+                    if (c != 255) 
+                        atariRam[764] = ascii2keypress[c];
                 }
             }
         }
