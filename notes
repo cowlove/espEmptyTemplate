@@ -1,3 +1,7 @@
+/home/jim/src/arduino-esp32/tools/esptool/esptool -p /dev/ttyACM0 -c auto erase_flash
+
+
+
 core1.cpp.20250705.203509 ran about 1900, with 5 opening nops.   increased to 8  
 
 core1.cpp.20250705.200816 hit 3000, replaced first nops with clock wait 

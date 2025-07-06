@@ -258,7 +258,7 @@ const struct lfs_config cfg = {
     .read_size = 16,
     .prog_size = 16,
     .block_size = 4096,
-    .block_count = 128,
+    .block_count = 0x20000 / 4096,
     .block_cycles = 500,
     .cache_size = 16,
     .lookahead_size = 16,
@@ -870,6 +870,15 @@ void IRAM_ATTR core0Loop() {
                 diskReadCount++;
                 #endif 
 
+                if (1) { 
+                    enableCore0WDT();
+                    portENABLE_INTERRUPTS();
+                    printf("IO request: ");
+                    StructLog<PbiIocb>::printEntry(*pbiRequest);
+                    fflush(stdout);
+                    portDISABLE_INTERRUPTS();
+                    disableCore0WDT();
+                }
                 ledColor[1] += 3;
                 ledColor[0] += 2;
                 ledColor[2] += 1;
@@ -926,6 +935,15 @@ void IRAM_ATTR core0Loop() {
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
                     int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
                     structLogs.dcb.add(*dcb);
+                    if (1) { 
+                        enableCore0WDT();
+                        portENABLE_INTERRUPTS();
+                        printf("DCB: ");
+                        StructLog<AtariDCB>::printEntry(*dcb);
+                        fflush(stdout);
+                        portDISABLE_INTERRUPTS();
+                        disableCore0WDT();
+                    }
                     if (dcb->DDEVIC == 0x31 && dcb->DUNIT >= 1 && dcb->DUNIT < sizeof(atariDisks)/sizeof(atariDisks[0]) + 1) {  // Device D1:
                         DiskImage::DiskImageRawData *disk = atariDisks[dcb->DUNIT - 1].image; 
                         if (disk != NULL) { 
@@ -1050,7 +1068,7 @@ void IRAM_ATTR core0Loop() {
                 }
             }
 #endif
-            if (1) { 
+            if (0) { 
                 static int lastReads = 0;
                 static int secondsWithoutRead = 0;
                 if (diskReadCount == lastReads) { 
