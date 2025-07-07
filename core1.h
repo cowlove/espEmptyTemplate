@@ -27,7 +27,7 @@ void IRAM_ATTR iloop_pbi();
 
 //XOPTS    
 //#define BUS_MONITOR
-#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
+//#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 //#define FAKE_CLOCK
 
 static const struct {

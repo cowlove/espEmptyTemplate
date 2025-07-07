@@ -721,6 +721,7 @@ void IRAM_ATTR core0Loop() {
                 diskReadCount++;
                 #endif 
 
+#ifdef BUS_DETACH
                 if (1) { 
                     enableCore0WDT();
                     portENABLE_INTERRUPTS();
@@ -730,9 +731,7 @@ void IRAM_ATTR core0Loop() {
                     portDISABLE_INTERRUPTS();
                     disableCore0WDT();
                 }
-                ledColor[1] += 3;
-                ledColor[0] += 2;
-                ledColor[2] += 1;
+#endif
                 AtariIOCB *iocb = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + pbiRequest->x]; // todo validate x bounds
                 //pbiRequest->y = 1; // assume success
                 //pbiRequest->carry = 0; // assume fail 
@@ -786,6 +785,7 @@ void IRAM_ATTR core0Loop() {
                     uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
                     int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
                     structLogs.dcb.add(*dcb);
+#ifdef BUS_DETACH
                     if (1) { 
                         enableCore0WDT();
                         portENABLE_INTERRUPTS();
@@ -795,6 +795,7 @@ void IRAM_ATTR core0Loop() {
                         portDISABLE_INTERRUPTS();
                         disableCore0WDT();
                     }
+#endif
                     if (dcb->DDEVIC == 0x31 && dcb->DUNIT >= 1 && dcb->DUNIT < sizeof(atariDisks)/sizeof(atariDisks[0]) + 1) {  // Device D1:
                         DiskImage::DiskImageRawData *disk = atariDisks[dcb->DUNIT - 1].image; 
                         if (disk != NULL) { 
