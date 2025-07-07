@@ -27,7 +27,7 @@ void IRAM_ATTR iloop_pbi();
 
 //XOPTS    
 //#define BUS_MONITOR
-//#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
+#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
 //#define FAKE_CLOCK
 
 static const struct {
@@ -89,6 +89,10 @@ static const int      readWritePin = 21;
 static const int      readWriteMask = (1 << readWritePin); 
 
 //GPIO1 pins
+static const int      interruptPin = 48;
+static const int      interruptShift = (interruptPin - 32);
+static const int      interruptMask = 1 << interruptShift; 
+
 #ifdef HAVE_RESET_PIN
 static const int      resetPin = 46;
 static const int      resetMask = 1 << (resetPin - 32); 

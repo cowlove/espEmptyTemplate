@@ -53,26 +53,23 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
-    RAM_VOLATILE uint8_t * const bankD800[2] = { &atariRam[0xd800], &pbiROM[0] };
+    RAM_VOLATILE uint8_t * const bankD800[2] = { &pbiROM[0], &atariRam[0xd800]};
 
     static uint8_t dummyStore;
  
     do {    
         //while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) != 0) {}
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
-        #ifdef FAKE_CLOCK
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        #endif
-        int mpdSelect = (atariRam[0xd1ff] & 1);
-        // TODO: busMask isn't used any more, but preserve ENABLE1 timings when removing 
-        const uint32_t fetchedBusMask = busMask;
-        uint32_t clrMask = (mpdSelect << mpdShift);// | ((fetchedBusMask & data0Mask) << (extSel_Pin - data0Pin));
-        uint32_t setMask = clrMask ^ (mpdMask | extSel_Mask);
+        int mpdSelect = (atariRam[0xd1ff] & 1) ^ 1;
+        //const uint32_t fetchedBusMask = busMask;
+        uint32_t setMask = (mpdSelect << mpdShift) | busMask;
         banks[0xd800 >> bankShift] = bankD800[mpdSelect];
         __asm__ __volatile__("nop");
-        __asm__ __volatile__("nop");
-        // Timing critical point.  At >= 10 ticks to before the REG_WRITE 
-        //PROFILE(2, XTHAL_GET_CCOUNT() - tscFall); 
+        //__asm__ __volatile__("nop");
+
+        // Timing critical point: >= 10 ticks before the disabling the data lines 
+        // PROFILE(2, XTHAL_GET_CCOUNT() - tscFall); 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         // TODO: we could rearrange the address pins with casInh_pin directly above
@@ -99,7 +96,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             busMon.add(r0);
 #endif
 
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {}
+            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
         
         } else { //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift; 
@@ -127,10 +124,8 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
 #endif
+            // Timing critical point: >= 90 ticks before reading data lines 
             PROFILE(0, XTHAL_GET_CCOUNT() - tscFall); 
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
             *storeAddr = (r1 >> dataShift);

@@ -80,20 +80,20 @@ DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
 
-volatile uint32_t busMask = dataMask;
+volatile uint32_t busMask = extSel_Mask;
 
 IRAM_ATTR void enableBus() { 
     for(int i = 0; i < nrBanks; i++) { 
-            bankEnable[i] = mpdMask | extSel_Mask;
-            bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask;
+        bankEnable[i] = mpdMask | extSel_Mask | interruptMask;
+        bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask | interruptMask;
     }
-    busMask = dataMask | extSel_Mask | mpdMask;
+    //busMask = dataMask | extSel_Mask | mpdMask;
     delayTicks(240 * 100);
 }
 
 IRAM_ATTR void enableSingleBank(int b) {
-    bankEnable[b] = mpdMask | extSel_Mask;
-    bankEnable[b + nrBanks] = dataMask | mpdMask | extSel_Mask;
+    bankEnable[b] = mpdMask | extSel_Mask | interruptMask;
+    bankEnable[b + nrBanks] = dataMask | mpdMask | extSel_Mask | interruptMask;
 }
 
 IRAM_ATTR void disableBus() {
@@ -102,7 +102,7 @@ IRAM_ATTR void disableBus() {
         bankEnable[i] = mpdMask;
         bankEnable[i + nrBanks] = mpdMask;
     }
-    busMask = extSel_Mask | mpdMask;
+    //busMask = extSel_Mask | mpdMask;
 }
 
 std::string vsfmt(const char *format, va_list args);
@@ -433,6 +433,9 @@ struct AtariIO {
         if (filename == "J:REMAP") {
             bankEnable[(0x8000>>bankShift)] = mpdMask | extSel_Mask;
             bankEnable[(0x8000>>bankShift) + nrBanks] = dataMask | mpdMask | mpdMask;
+        }
+        if (filename == "J:INT") {
+            busMask |= interruptMask;
         }
 #else 
     void open() { 
@@ -903,7 +906,7 @@ void IRAM_ATTR core0Loop() {
                 }
             }
 #endif
-            if (0) { 
+            if (1) { 
                 static int lastReads = 0;
                 static int secondsWithoutRead = 0;
                 if (diskReadCount == lastReads) { 
@@ -920,7 +923,6 @@ void IRAM_ATTR core0Loop() {
                 if (secondsWithoutRead == 11) { 
                     break;
                 }
-
             }
 
             if (elapsedSec == 1) { 
@@ -1371,6 +1373,8 @@ void setup() {
         digitalWrite(extSel_Pin, 1);
         pinMode(mpdPin, OUTPUT);
         digitalWrite(mpdPin, 1);
+        pinMode(interruptPin, OUTPUT);
+        digitalWrite(interruptPin, 0);
     }
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;
