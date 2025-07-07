@@ -398,7 +398,9 @@ const char *defaultProgram =
         "57 CLOSE #1 \233"
         "58 SEC = SEC + 1 \233"
         "59 IF SEC > 100 THEN SEC = 0 \233"
-        "70 GOTO 10 \233";
+        "70 GOTO 10 \233"
+        "RUN\233"
+        ;
 ;
 
 vector<uint8_t> simulatedKeypressQueue;
@@ -716,15 +718,19 @@ void IRAM_ATTR core0Loop() {
                 busMon.enable = true;
                 structLogs.pbi.add(*pbiRequest);
                 while(busMon.available()) { busMon.get(); }                
-                #ifdef BUS_DETACH
+                diskReadCount++;
+#ifdef BUS_DETACH
                 // Disable PBI memory device 
                 disableBus();
-                diskReadCount = lfs_updateTestFile();
-                #else
-                diskReadCount++;
-                #endif 
-
-#ifdef BUS_DETACH
+                if (1) { 
+                    enableCore0WDT();
+                    portENABLE_INTERRUPTS();
+                    // lfs_ may call printf();
+                    diskReadCount = lfs_updateTestFile();
+                    fflush(stdout);
+                    portDISABLE_INTERRUPTS();
+                    disableCore0WDT();
+                }
                 if (1) { 
                     enableCore0WDT();
                     portENABLE_INTERRUPTS();
@@ -897,15 +903,13 @@ void IRAM_ATTR core0Loop() {
             elapsedSec++;
             
 #ifndef FAKE_CLOCK
-            if (elapsedSec == 10) { 
-                addSimKeypress("   \233E.\"J\233                         \233RUN\233\233DOS\233");
-                simulatedKeysAvailable = 1;
+            if (elapsedSec == 15) { 
+                addSimKeypress("    \233E.\"J\233");
                 //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
                 for(int i = 0; i < sizeof(atariRam); i++) { 
                     psram[i] = 0;
                 }
-            }
-#endif
+            } 
             if (1) { 
                 static int lastReads = 0;
                 static int secondsWithoutRead = 0;
@@ -920,10 +924,11 @@ void IRAM_ATTR core0Loop() {
                             psram[i] = 0;
                     }
                 }
-                if (secondsWithoutRead == 11) { 
+                if (secondsWithoutRead == 20) { 
                     break;
                 }
             }
+#endif
 
             if (elapsedSec == 1) { 
                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
