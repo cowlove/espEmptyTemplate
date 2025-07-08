@@ -598,7 +598,7 @@ void IRAM_ATTR core0Loop() {
 
     while(1) {
         uint32_t stsc = XTHAL_GET_CCOUNT();
-        if (1) {
+        if (0) {
             static const int tbSize = 128;
             uint32_t *traceBuf =(uint32_t *) heap_caps_aligned_alloc(64, tbSize * 4,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
             uint32_t *tbPtr = traceBuf;
