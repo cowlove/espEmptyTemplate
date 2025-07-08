@@ -22,6 +22,7 @@ git clone https://github.com/hathach/tinyusb.git /opt/esp/lib-builder/components
 git -C /opt/esp/lib-builder/components/arduino_tinyusb/tinyusb checkout 72b1fc50e
 sed -i  's/exit 1/exit 0/' ./tools/update-components.sh 
 grep CONFIG_ESP_INT_WDT_CHECK_CPU1=n ./configs/defconfig.common || echo CONFIG_ESP_INT_WDT_CHECK_CPU1=n >> configs/defconfig.common
+grep CONFIG_FREERTOS_UNICORE=y ./configs/defconfig.common || echo CONFIG_FREERTOS_UNICORE=y >> configs/defconfig.common
 ./build.sh -t esp32 -c /arduino-esp32/
 exec /bin/bash
 
