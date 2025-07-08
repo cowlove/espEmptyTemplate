@@ -70,6 +70,7 @@ IRAM_ATTR inline void delayTicks(int ticks) {
 DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 2];
 DRAM_ATTR uint32_t bankEnable[nrBanks * 2];
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
+DRAM_ATTR RAM_VOLATILE uint8_t atariRomWrites[64 * 1024] = {0x0};
 //DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
 //#include "joust.h"
 //};
@@ -854,8 +855,13 @@ void IRAM_ATTR core0Loop() {
 #endif // ENABLE_SIO 
                 } else if (pbiRequest->cmd == 8) { // IRQ
                     pbiRequest->y = 1; // assume success
-                    pbiRequest->carry = 0;
+                    busMask &= ~interruptMask; // turn off interrupt 
+                    //REG_WRITE(GPIO_OUT1_W1TC_REG, interruptMask);
+                    atariRam[712]++; // TMP: increment border color as visual indicator 
+                    pbiRequest->carry = 1;
                 } else if (pbiRequest->cmd == 9) { // REMAP
+                    // called after each command to re-enable the bus, we leave
+                    // pbiRequest->{a,x,y,carry} containing the previous command results
                     #ifdef BUS_DETACH
                     atariRam[0x0012] = pbiRequest->rtclok1;
                     atariRam[0x0013] = pbiRequest->rtclok2;

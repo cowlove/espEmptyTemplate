@@ -1,52 +1,51 @@
-PDVMSK  =   $0247   ;Parallel device mask (indicates which are
-NDEVREQ =   $0248   ; activated PBI device
-PDIMSK  =   $0249   ;Parallel interrupt mask (not used in this
-GPDVV   =   $E48F   ;Generic Parallel Device Vector
-GENDEV  =   $E48F
-HATABS  =   $031A   ;Device handler table
-CRITIC  =   $42     ;Critical code section flag
-DEVNAM  =   'J
-RTCLOK  =   $12
-NMIEN   =   $D40E
+PDVMSK  =   $0247   //;Parallel device mask (indicates which are
+NDEVREQ =   $0248   //;Shadow of PDVS ($D1FF), currently activated PBI device
+PDIMSK  =   $0249   //;Parallel interrupt mask
+GPDVV   =   $E48F   //;Generic Parallel Device Vector, placed in HATABS by init routine 
+HATABS  =   $031A   //;Device handler table
+CRITIC  =   $0042   //;Critical code section flag
+RTCLOK  =   $0012   //;Real time clock, 3 bytes
+NMIEN   =   $D40E   //;NMI enable mask on Antic
+NEWDEV  =   $E486   //;routine to add device to HATABS, doesn't seem to work, see below 
+IOCBCHIDZ = $0020   //;page 0 copy of current IOCB 
 
+DEVNAM  =   'J'     //;device letter J drive in this device's case
+PDEVNUM =   1       //;Parallel device bit mask - 1 in this device's case.  $1,2,4,8,10,20,40, or $80   
 
-NEWDEV  =   $E486
-
-IOCBCHIDZ = $20
 
 #ifndef BASE_ADDR
 BASE_ADDR = $d800
 #endif
 * = BASE_ADDR
 
-.word    $fff,                       // D800 ROM cksum lo
+.word   $ffff,                      // D800 ROM cksum lo
 .byt    $01,                        // D802 ROM version
-.byt    $80,                        // D803 ID num
+.byt    $80,                        // D803 ID num 1, must be $80
 .byt    $01,                        // D804 Device Type
-jmp PBI_IO
-jmp PBI_ISR                         // 8,9,a
-.byt    $91,                        // D80B ID num 2 (0x91)
-.byt    DEVNAM,                        // D80C Device Name (ASCII)
+jmp PBI_IO                          // D805-D807 Jump vector entry point for SIO-similar IO 
+jmp PBI_ISR                         // D808-D80A Jump vector entry point for external PBI interrupt handler
+.byt    $91,                        // D80B ID num 2, must be $91
+.byt    DEVNAM,                     // D80C Device Name (ASCII)
 .word PBI_OPEN - 1
 .word PBI_CLOSE - 1
 .word PBI_GETB - 1
 .word PBI_PUTB - 1
 .word PBI_STATUS - 1
 .word PBI_SPECIAL - 1
-jmp PBI_INIT                        // D819,A,B
+jmp PBI_INIT                        // D819-D81B Jump vector for device initialization 
 .byt $ff
 .byt $0
 .byt $0
-.byt $0
+.byt $0                             // Pad out to $D820
 
-ESP32_IOCB_REQ
+ESP32_IOCB_REQ                      // Private IOCB structure for passing info to ESP32
     .byt $0     ;  request - 6502 sets to 1 after filling out ESP32_IOCB struct, esp32 clears after handling
 ESP32_IOCB_A
     .byt $ee     ;  A - iocb index * $20 
 ESP32_IOCB_X
     .byt $ee     ;  X -  
 ESP32_IOCB_Y
-    .byt $ee    ;  Y -  
+    .byt $ee     ;  Y -  
 ESP32_IOCB_CMD
     .byt $ee     ;  CMD 
 ESP32_IOCB_CARRY
@@ -69,8 +68,7 @@ ESP32_IOCB_LOC004E
     .byt $ee
 ESP32_IOCB_LOC004F
     .byt $ee
-
-ESP32_IOCB_CHECKADDR
+ESP32_IOCB_CHECKADDR                     // check byte to confirm code is compiled at the right location
     .byt * / $100 
 
 TEST_ENTRY
@@ -81,9 +79,12 @@ TEST_ENTRY
 PBI_INIT
     lda #$0f    //; set border white as indicator 
     sta 712 
-    lda PDVMSK  //;Get enabled device flags
-    ora #1      //;Set bit 0.
-    sta PDVMSK  //;& replace.
+    lda PDVMSK  // enable this device's bit in PDVMSK
+    ora #PDEVNUM
+    sta PDVMSK  
+    lda PDIMSK  // enable this device's bit in PDIMSK
+    ora #PDEVNUM 
+    sta PDIMSK
 
  ;Put device name in Handler table HATABS
      LDX #0
@@ -102,16 +103,17 @@ PBI_INIT
  FNDIT
      LDA #DEVNAM ;Get device name.
      STA HATABS,X ;Put it in blank spot.
-     LDA #GPDVV&$FF ;Get lo byte of vector.
+     LDA #GPDVV & $FF ;Get lo byte of vector.
      STA HATABS+1,X
-     LDA #GPDVV/$0100 ;Get hi byte of vector.
+     LDA #GPDVV / $0100 ;Get hi byte of vector.
      STA HATABS+2,X
 
-
-    ;ldx #DEVNAM
-    ;lda GENDEV / $100
-    ;ldy GENDEV & $ff
-    ;jsr NEWDEV		//; returns: N = 1 - failed, C = 0 - success, C =1 - entry already exists
+    //; NEWDEV routine was reported to do the above search and insert for us,
+    //; but I couldn't get it to work 
+    //;ldx #DEVNAM
+    //;lda GENDEV / $100
+    //;ldy GENDEV & $ff
+    //;jsr NEWDEV		//; returns: N = 1 - failed, C = 0 - success, C =1 - entry already exists
 
     ldx #COPY_END-COPY_BEGIN-1
 L1
@@ -122,7 +124,7 @@ L1
     rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SIO ROUTINES 
+;; SIO ENTRY ROUTINES 
 
 PBI_IO
     sta ESP32_IOCB_A
@@ -162,7 +164,16 @@ PBI_SPECIAL
     sta ESP32_IOCB_A
     lda #6 // cmd close
 PBI_ALL
-    // cmd placed in A by entry stubs
+    // cmd placed in A by entry stubs above 
+    // TODO: need to make sure this request is for this device by checking 
+    // for this device's bit to be set in NDEVREQ
+    //      sta ESP32_IOCB_CMD
+    //      lda NDEVREQ
+    //      ora #PDEVNUM
+    //      bne CONTINUE
+    //      clc // not us, return 
+    //      rts
+    // CONTINUE 
     sta ESP32_IOCB_CMD
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y

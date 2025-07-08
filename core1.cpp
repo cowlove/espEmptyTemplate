@@ -34,11 +34,11 @@
 //SYSTEM_CORE_1_CONTROL_0_REG
 #define RPACK(r0, data) ((r0 & 0x3fffff) | (data << 24))
 
-static uint8_t dummyWriteBank[bankSize];
+//static uint8_t dummyWriteBank[bankSize];
 
 void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
-        banks[i] = &dummyWriteBank[0];
+        banks[i] = &atariRomWrites[64 * 1024 / nrBanks * i];
         banks[i + nrBanks] = &atariRam[64 * 1024 / nrBanks * i];
     };
     for(int i = 0; i < nrBanks; i++) {

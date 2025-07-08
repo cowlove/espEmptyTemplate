@@ -52,7 +52,7 @@ void IRAM_ATTR iloop_pbi();
 
 //XOPTS    
 //#define BUS_MONITOR
-#define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
+#define BUS_DETACH 
 //#define FAKE_CLOCK
 
 static const struct {
@@ -169,6 +169,7 @@ static const int bankShift = 16 - bankBits;
 extern DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 2];
 extern DRAM_ATTR uint32_t bankEnable[nrBanks * 2];
 extern DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024];
+extern DRAM_ATTR RAM_VOLATILE uint8_t atariRomWrites[64 * 1024];
 extern DRAM_ATTR RAM_VOLATILE uint8_t cartROM[];
 extern DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024];
 
