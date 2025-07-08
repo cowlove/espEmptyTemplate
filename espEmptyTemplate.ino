@@ -1535,7 +1535,7 @@ void IRAM_ATTR iloop_pbi() {
                 banks[0xd800 >> bankShift] = &atariRam[0xd800];
             }
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
-            //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
+            profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
             // this will be needed eventually to handle not trashing RAM under mapped ROMS
@@ -1551,13 +1551,13 @@ void IRAM_ATTR iloop_pbi() {
                 //mpdActive = (data == 1);
                 currentD1FF = data;
             }
-            //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+            profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }
 
 #ifdef FAKE_CLOCK // add profiling for bench timing runs 
         //profilers[0].add(tscFall - lastTscFall);  
         //lastTscFall = tscFall;
-        profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
+        //profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  
 #endif
     } while(1);
 }
