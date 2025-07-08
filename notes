@@ -662,3 +662,7 @@ Total samples 198656733 implies 110.36 sec sampling
 
 7/8/25 
 Came home at work, 9b7450 hung at 17000 iterations 
+
+# to use the idf enviornment configuration stuff 
+python3 esp-idf/tools/activate.py 
+esp-idf/tools/idf.py menuconfig
