@@ -416,7 +416,7 @@ int simulatedKeysAvailable = 0;
 #ifndef FAKE_CLOCK
 #define ENABLE_SIO
 #define SIM_KEYPRESS
-#define SIM_KEYPRESS_FILE
+//#define SIM_KEYPRESS_FILE
 #endif
 struct AtariIO {
     uint8_t buf[2048];
