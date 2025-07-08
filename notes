@@ -665,3 +665,5 @@ iR
  2000  touch  ../arduino-esp32-singlecore/tools/esp32-arduino-libs/esp32/lib/libjoltwallet__littlefs.a ../arduino-esp32-singlecore/tools/esp32-arduino-libs/esp32/lib/libjoltwallet__littlefs.a.NO
  2001  sudo touch  ../arduino-esp32-singlecore/tools/esp32-arduino-libs/esp32/lib/libjoltwallet__littlefs.a ../arduino-esp32-singlecore/tools/esp32-arduino-libs/esp32/lib/libjoltwallet__littlefs.a.NO
 
+7/8/25 
+Came home at work, 9b7450 hung at 17000 iterations 

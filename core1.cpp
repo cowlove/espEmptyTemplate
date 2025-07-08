@@ -64,7 +64,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         //while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) != 0) {}
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
-        int mpdSelect = (atariRam[0xd1ff] & 1) ^ 1;
+        int mpdSelect = (atariRomWrites[0xd1ff] & 1) ^ 1;
         //const uint32_t fetchedBusMask = busMask;
         uint32_t setMask = (mpdSelect << mpdShift) | busMask;
         //__asm__ __volatile__ ("nop");
