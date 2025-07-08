@@ -111,7 +111,15 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
 #else
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
+            __asm__ __volatile__("nop");
             REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
+            __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
