@@ -53,7 +53,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
 
     while((dedic_gpio_cpu_ll_read_in()) == 0) {}
     while((dedic_gpio_cpu_ll_read_in()) != 0) {}
-    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
+//    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in()) == 0) {}
   
     REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
@@ -64,15 +64,15 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     do {    
         //while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) != 0) {}
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
+#ifdef FAKE_CLOCK
         uint32_t tscFall = XTHAL_GET_CCOUNT();
+#endif
         int mpdSelect = (atariRam[0xd1ff] & 1) ^ 1;
         //const uint32_t fetchedBusMask = busMask;
         uint32_t setMask = (mpdSelect << mpdShift) | busMask;
         banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
-        __asm__ __volatile__("nop");
-        //__asm__ __volatile__("nop");
-
-        // Timing critical point: >= 10 ticks before the disabling the data lines 
+        __asm__ __volatile__ ("nop");
+        // Timing critical point #1: >= 4 ticks before the disabling the data lines 
         // PROFILE(2, XTHAL_GET_CCOUNT() - tscFall); 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
@@ -93,7 +93,8 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
             uint8_t data = *ramAddr;
-            REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);             
+            REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);
+            // Timing critical point #2 - REG_WRITE completed by 85 ticks
             PROFILE(1, XTHAL_GET_CCOUNT() - tscFall); 
 #ifdef BUS_MONITOR
             busMon.add(r0);
@@ -128,7 +129,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
 #endif
-            // Timing critical point: >= 90 ticks before reading data lines 
+            // Timing critical point #3: Wait at least 80 ticks before reading data lines 
             PROFILE(0, XTHAL_GET_CCOUNT() - tscFall); 
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
             uint8_t data = (r1 >> dataShift);
