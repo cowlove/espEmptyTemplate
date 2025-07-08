@@ -162,7 +162,7 @@ struct Hist2 {
     }
 };
 
-static const int numProfilers = 3;
+static const int numProfilers = 4;
 extern DRAM_ATTR Hist2 profilers[numProfilers];
 #ifdef FAKE_CLOCK
 #define PROFILE(a, b) profilers[a].add(b)
