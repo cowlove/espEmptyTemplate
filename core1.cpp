@@ -89,8 +89,8 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
             PROFILE2(XTHAL_GET_CCOUNT() - tscFall); 
             banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
-            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0);
-            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
+            //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0);
+            while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
             // Timing critical point #4:  All work done by 111 ticks
             PROFILE4(XTHAL_GET_CCOUNT() - tscFall); 
@@ -104,7 +104,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             //__asm__ __volatile__ ("nop");
     
             banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
-            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
+            //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
             while(XTHAL_GET_CCOUNT() - tscFall < 78) {}
 
             // Timing critical point #3: Wait at least 80 ticks before reading data lines 
