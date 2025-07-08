@@ -56,7 +56,7 @@ static const struct {
 //#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
-   float histRunSec   = 10;
+   float histRunSec   = 60;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -20;
@@ -1528,7 +1528,7 @@ void IRAM_ATTR iloop_pbi() {
             if ((r0 & casInh_Mask) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift)); 
-                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
+                //profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
             } else {
                 // ~80 cycles intermittently available here to do misc infrequent work 
@@ -1540,7 +1540,8 @@ void IRAM_ATTR iloop_pbi() {
                 REG_WRITE(GPIO_OUT1_W1TS_REG, mpdMask); 
                 banks[0xd800 >> bankShift] = &atariRam[0xd800];
             }
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
+            profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
             // this will be needed eventually to handle not trashing RAM under mapped ROMS
@@ -1550,13 +1551,14 @@ void IRAM_ATTR iloop_pbi() {
             __asm__("nop"); 
             __asm__("nop"); 
             __asm__("nop"); 
-            profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
+            //profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
             if (addr == 0xd1ff) {
                 //mpdActive = (data == 1);
                 currentD1FF = data;
             }
+            profilers[3].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }
 
 #ifdef FAKE_CLOCK // add profiling for bench timing runs 
