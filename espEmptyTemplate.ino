@@ -567,6 +567,7 @@ DiskImage atariDisks[8] = {
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
 volatile int diskReadCount = 0;
+string exitReason = "";
 
 // Apparently can't make any function calls from the core0 loops, even inline.  Otherwise it breaks 
 // timing on the core1 loop
@@ -978,6 +979,7 @@ void IRAM_ATTR core0Loop() {
                     }
                 }
                 if (secondsWithoutRead == 20) { 
+                    exitReason = "Timeout with no IO requests";
                     break;
                 }
             }
@@ -986,8 +988,14 @@ void IRAM_ATTR core0Loop() {
             if (elapsedSec == 1) { 
                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
-            if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
-            if(atariRam[754] == 23) break;
+            if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) {
+                exitReason = "Specified run time reached";   
+                break;
+            }
+            if(atariRam[754] == 23) {
+                exitReason = "Z key pressed";
+                break;
+            }
 
 #if 0 
             // map in cartridge 
@@ -1208,9 +1216,10 @@ void threadFunc(void *) {
 #endif 
     printf("busMask: %08x bus is %s\n", busMask, (busMask & dataMask) == dataMask ? "ENABLED" : "DISABLED");
     
-    printf("GIT: " GIT_VERSION "\n");
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
+    printf("Exit reason: %s\n", exitReason.c_str());
+    printf("GIT: " GIT_VERSION "\n");
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
     
