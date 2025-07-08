@@ -1214,13 +1214,11 @@ void threadFunc(void *) {
         }
     }  
 #endif 
-    printf("busMask: %08x bus is %s\n", busMask, (busMask & dataMask) == dataMask ? "ENABLED" : "DISABLED");
+    //printf("busMask: %08x bus is %s\n", busMask, (busMask & dataMask) == dataMask ? "ENABLED" : "DISABLED");
     
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
-    printf("Exit reason: %s\n", exitReason.c_str());
-    printf("GIT: " GIT_VERSION "\n");
-    printf("DONE %.2f\n", millis() / 1000.0);
+    printf("DONE %.2f GIT: " GIT_VERSION " Exit reason: %s\n", millis() / 1000.0, exitReason.c_str());
     delay(100);
     
     //ESP.restart();
