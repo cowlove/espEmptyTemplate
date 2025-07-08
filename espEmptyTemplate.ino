@@ -18,6 +18,11 @@
 #include <freertos/xtensa_timer.h>
 #include <freertos/xtensa_rtos.h>
 
+#include <vector>
+#include <string>
+using std::vector;
+using std::string;
+
 //#include <esp_spi_flash.h>
 #include "esp_partition.h"
 #include "esp_err.h"
@@ -28,8 +33,6 @@
 #else 
 #include "esp32csim.h"
 #endif
-#include "jimlib.h"
-#include "LittleFS.h"
 
 #include "ascii2keypress.h"
 // Usable pins
@@ -53,7 +56,7 @@ static const struct {
 //#define FAKE_CLOCK
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
-   float histRunSec   = 20;
+   float histRunSec   = 10;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -20;
@@ -93,6 +96,7 @@ struct Pin {
     uint32_t const mask() { return ((1 << bitlen) - 1) << shift(); }
     int const shift() { return gpionum & 31; }
 };
+
 
 //GPIO0 pins
 static const int      casInh_pin = 0;
@@ -203,8 +207,6 @@ uint32_t lastAddr = -1;
 volatile int cumulativeResets = 0;
 volatile int currentResetValue = 1;
 
-JStuff j;
-
 volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
 int maxElapsed1 = 0, maxElapsed2 = 0;
 int maxElapsedIndex1 = 0;
@@ -283,7 +285,8 @@ void IRAM_ATTR NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val,
 
 //  socat TCP-LISTEN:9999 - > file.bin
 bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) { 
-    //neopixelWrite(ledPin, 0, 0, 8);
+#if 0 
+   //neopixelWrite(ledPin, 0, 0, 8);
     //char *host = "10.250.250.240";
     char *host = "192.168.68.131";
     ////WiFi.begin("Station54", "Local1747"); host = "10.250.250.240";
@@ -322,7 +325,9 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
     printf("\nDone %.3f mB/sec\n", psram_sz / 1024.0 / 1024.0 / (millis() - startMs) * 1000.0);
     fflush(stdout);
     neopixelWrite(ledPin, 0, 8, 0);
+#endif
     return true;
+
 }
 
 struct Hist2 { 
@@ -846,7 +851,7 @@ void IRAM_ATTR core0Loop() {
                 simulatedKeysAvailable = 1;
                 //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
-            if (elapsedSec == 5) { 
+            if (elapsedSec == 1) { 
                 for(int i = 0; i < numProfilers; i++) profilers[i].clear();
             }
             if(elapsedSec > opt.histRunSec && opt.histRunSec > 0) break;
@@ -875,7 +880,7 @@ void IRAM_ATTR core0Loop() {
 void threadFunc(void *) { 
     printf("CORE0: threadFunc() start\n");
 
-    SPIFFSVariableESP32Base::begin();
+    //SPIFFSVariableESP32Base::begin();
 
     pinMode(ledPin, OUTPUT);
     digitalWrite(ledPin, 0);
@@ -926,7 +931,6 @@ void threadFunc(void *) {
     }
     printf("GIT: " GIT_VERSION "\n");
 
-
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     uint32_t oldint;
     if (opt.maskCore0Int) { 
@@ -948,9 +952,9 @@ void threadFunc(void *) {
     while(XTHAL_GET_CCOUNT() - startTsc < 2 * 24 * 1000000) {}
 
     if (opt.maskCore0Int) { 
+        enableCore0WDT();
         portENABLE_INTERRUPTS();
         _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi;
-        enableCore0WDT();
         //__asm__("wsr %0,PS" : : "r"(oldint));
     }
 
@@ -1003,12 +1007,12 @@ void threadFunc(void *) {
             }
         }
         for(int i = first; i <= last; i++) {
-            string s = sfmt("% 3d ", i);
+            printf("% 3d ", i);
             for(int c = 0; c < numProfilers; c++) {
-                s += sfmt("% 8d ", profilers[c].buckets[i]);
+                printf("% 8d ", profilers[c].buckets[i]);
             }
-            s += " HIST";
-            v.push_back(s);
+            printf(" HIST\n");
+            //v.push_back(s);
         }
 
         for (int c = 0; c < numProfilers; c++) {
@@ -1020,25 +1024,25 @@ void threadFunc(void *) {
                 if (profilers[c].buckets[i] > 0) first = i;
             }
             yield();
-            v.push_back(sfmt("channel %d: range %3d -%3d, jitter %3d", c, first, last, last - first));
+            //v.push_back(sfmt("channel %d: range %3d -%3d, jitter %3d", c, first, last, last - first));
         }
         uint64_t totalEvents = 0;
         for(int i = 0; i < profilers[0].maxBucket; i++)
             totalEvents += profilers[0].buckets[i];
-        v.push_back(sfmt("Total samples %lld implies %.2f sec sampling\n",
-                    totalEvents, 1.0 * totalEvents / 1.8 / 1000000));
+        //v.push_back(sfmt("Total samples %lld implies %.2f sec sampling\n",
+        //            totalEvents, 1.0 * totalEvents / 1.8 / 1000000));
 
         for(auto s : v) 
             printf("%s\n", s.c_str());
         printf("Writing to flash\n");
         yield(); 
-        LittleFS.remove("/histogram");
+        //LittleFS.remove("/histogram");
         yield();
         printf("LittleFS.remove() finished\n"); 
-        SPIFFSVariable<vector<string>> h("/histogram", {});
+        //SPIFFSVariable<vector<string>> h("/histogram", {});
         printf("SPIFFS var finished\n"); 
         yield();
-        h = v;
+        //h = v;
         printf("Done writing to flash\n"); 
         //neopixelWrite(ledPin, 0, 0, 8);
     }
@@ -1047,8 +1051,6 @@ void threadFunc(void *) {
     
     if (opt.tcpSendPsram) { 
         printf("TCP SEND %.2f\n", millis() / 1000.0);
-        //j.begin();
-        //wdtReset();
         yield();
         //disableCore0WDT();
         //disableLoopWDT();
@@ -1149,11 +1151,13 @@ void setup() {
     }
 
     if (opt.histogram) { 
+#if 0
         SPIFFSVariable<vector<string>> hist("/histogram", {});
         vector<string> v = hist;
         for(auto s : v) { 
             printf("PREVIOUS %s\n", s.c_str());
         }
+#endif
     }
     if (1) { 
         uint32_t val = 0x10000000;
@@ -1510,6 +1514,7 @@ void IRAM_ATTR iloop_pbi() {
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         if (stop) break; // provides a needed 3-cycle delay 
 
+        //profilers[2].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);
         int mpdActive = (currentD1FF == 1);            
         REG_WRITE(GPIO_OUT1_W1TC_REG, dataMask);
@@ -1523,6 +1528,7 @@ void IRAM_ATTR iloop_pbi() {
             if ((r0 & casInh_Mask) != 0) {
                 REG_WRITE(GPIO_ENABLE1_W1TS_REG, dataMask | mpdMask | extSel_Mask); //    enable DATA lines for output
                 REG_WRITE(GPIO_OUT1_W1TS_REG, (data << dataShift)); 
+                profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
                 // timing requirement: < 85 ticks to here, graphic artifacts start ~88 or so
             } else {
                 // ~80 cycles intermittently available here to do misc infrequent work 
@@ -1535,7 +1541,6 @@ void IRAM_ATTR iloop_pbi() {
                 banks[0xd800 >> bankShift] = &atariRam[0xd800];
             }
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}                      // wait rising clock edge
-            profilers[1].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles
         
         } else {   //  XXWRITE  TODO - we dont do extsel/mpd here yet
             // this will be needed eventually to handle not trashing RAM under mapped ROMS
@@ -1545,13 +1550,13 @@ void IRAM_ATTR iloop_pbi() {
             __asm__("nop"); 
             __asm__("nop"); 
             __asm__("nop"); 
+            profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
             uint8_t data = REG_READ(GPIO_IN1_REG) >> dataShift;
             *ramAddr = data;
             if (addr == 0xd1ff) {
                 //mpdActive = (data == 1);
                 currentD1FF = data;
             }
-            profilers[0].add(XTHAL_GET_CCOUNT() - tscFall);  // currently 15 cycles 
         }
 
 #ifdef FAKE_CLOCK // add profiling for bench timing runs 
