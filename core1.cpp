@@ -27,7 +27,6 @@
 #include "hal/gpio_ll.h"
 #include "rom/gpio.h"
 
-
 #include "core1.h"
 
 #pragma GCC optimize("O3")
@@ -69,8 +68,9 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         //const uint32_t fetchedBusMask = busMask;
         uint32_t setMask = (mpdSelect << mpdShift) | busMask;
         //__asm__ __volatile__ ("nop");
+
         // Timing critical point #1: >= 4 ticks before the disabling the data lines 
-        // PROFILE(2, XTHAL_GET_CCOUNT() - tscFall); 
+        PROFILE1(XTHAL_GET_CCOUNT() - tscFall); 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         // TODO: we could rearrange the address pins with casInh_pin directly above
@@ -87,13 +87,13 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);
 
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
-            //PROFILE(1, XTHAL_GET_CCOUNT() - tscFall); 
+            PROFILE2(XTHAL_GET_CCOUNT() - tscFall); 
             banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
             REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0);
             //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
             // Timing critical point #4:  All work done by 111 ticks
-            PROFILE(3, XTHAL_GET_CCOUNT() - tscFall); 
+            PROFILE4(XTHAL_GET_CCOUNT() - tscFall); 
     
         } else { //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift; 
@@ -108,13 +108,13 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             while(XTHAL_GET_CCOUNT() - tscFall < 78) {}
 
             // Timing critical point #3: Wait at least 80 ticks before reading data lines 
-            //PROFILE(0, XTHAL_GET_CCOUNT() - tscFall); 
+            PROFILE3(XTHAL_GET_CCOUNT() - tscFall); 
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
             uint8_t data = (r1 >> dataShift);
             *storeAddr = data;
             
             // Timing critical point #4:  All work done by 111 ticks
-            PROFILE(3, XTHAL_GET_CCOUNT() - tscFall); 
+            PROFILE5(XTHAL_GET_CCOUNT() - tscFall); 
         } 
     } while(1);
 }

@@ -25,6 +25,31 @@ void IRAM_ATTR iloop_pbi();
 //GPIO0 bits: TODO rearrange bits so addr is in low bits and avoids needed a shift
 // Need 19 pines on gpio0: ADDR(16), clock, casInh, RW
 
+#define PROFILE1(a) 0
+#define PROFILE2(a) 0
+#define PROFILE3(a) 0
+#define PROFILE4(a) 0
+#define PROFILE5(a) 0
+
+#ifdef PROFA
+#define PROFILE1(ticks) profilers[0].add(ticks)
+#define FAKE_CLOCK
+#endif
+#ifdef PROFB
+#define PROFILE2(ticks) profilers[1].add(ticks)
+#define PROFILE3(ticks) profilers[2].add(ticks)
+#define FAKE_CLOCK
+#endif
+#ifdef PROFC
+#define PROFILE4(ticks) profilers[1].add(ticks)
+#define PROFILE5(ticks) profilers[2].add(ticks)
+#define FAKE_CLOCK
+#endif
+
+#ifndef TEST_SEC
+#define TEST_SEC -1
+#endif
+
 //XOPTS    
 //#define BUS_MONITOR
 #define BUS_DETACH  //fundamental flaw IRQ location is in mpd bank  
@@ -33,7 +58,7 @@ void IRAM_ATTR iloop_pbi();
 static const struct {
 #ifdef FAKE_CLOCK
    bool fakeClock     = 1; 
-   float histRunSec   = 10;
+   float histRunSec   = TEST_SEC;
 #else 
    bool fakeClock     = 0;
    float histRunSec   = -60;
@@ -138,7 +163,7 @@ static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
 static const int bankShift = 16 - bankBits;
 
-#define BUSCTL_VOLATILE //volatile
+#define BUSCTL_VOLATILE volatile
 #define RAM_VOLATILE //volatile
 
 extern DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 2];
@@ -147,7 +172,7 @@ extern DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024];
 extern DRAM_ATTR RAM_VOLATILE uint8_t cartROM[];
 extern DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024];
 
-extern volatile uint32_t busMask;
+extern BUSCTL_VOLATILE uint32_t busMask;
 
 struct Hist2 { 
     static const int maxBucket = 512; // must be power of 2
@@ -164,11 +189,6 @@ struct Hist2 {
 
 static const int numProfilers = 4;
 extern DRAM_ATTR Hist2 profilers[numProfilers];
-#ifdef FAKE_CLOCK
-#define PROFILE(a, b) profilers[a].add(b)
-#else
-#define PROFILE(a, b) do {} while(0)
-#endif
 
 #if 1
 #undef REG_READ
@@ -215,3 +235,4 @@ struct BusMonitor {
 #endif
 
 extern DRAM_ATTR BusMonitor busMon;
+

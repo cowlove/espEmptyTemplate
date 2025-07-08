@@ -80,7 +80,7 @@ DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
 
-volatile uint32_t busMask = extSel_Mask;
+BUSCTL_VOLATILE uint32_t busMask = extSel_Mask;
 
 IRAM_ATTR void enableBus() { 
     for(int i = 0; i < nrBanks; i++) { 
@@ -375,7 +375,6 @@ const struct AtariDefStruct {
     int NEWPORT = 0x31ff;
 } AtariDef;
 
-//static const int numProfilers = 3;
 DRAM_ATTR Hist2 profilers[numProfilers];
 int ramReads = 0, ramWrites = 0;
 
