@@ -4,7 +4,8 @@ CHIP ?= esp32
 
 ALIBS=${HOME}/Arduino/libraries
 EXCLUDE_DIRS=${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/esp32csim|${ALIBS}/PubSubClient/tests
-PART_FILE=${ESP_ROOT}/tools/partitions/min_spiffs.csv
+PART_FILE=partitions.csv
+FLASH_DEF=8M
 GIT_VERSION := "$(shell git describe --abbrev=6 --dirty --always)"
 
 ESP_ROOT=${HOME}/src/arduino-esp32-singlecore

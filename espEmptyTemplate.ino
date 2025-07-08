@@ -115,15 +115,18 @@ const esp_partition_t *partition;
 #include "lfs.h"
 // variables used by the filesystem
 lfs_t lfs;
-lfs_file_t file;
+lfs_file_t file, lfs_diskImg;
 
 size_t partition_size = 0x20000;
 const int lfsp_block_sz = 4096;
+extern struct lfs_config cfg;
 
 
 int lfsp_init() { 
     partition = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+    cfg.block_size = partition->erase_size;
+    cfg.block_count = partition->size / cfg.block_size;
     //printf("partition find returned %p, part->erase_size %d\n", partition, partition->erase_size);
     return 0;
 }
@@ -147,7 +150,7 @@ int lsfp_sync(const struct lfs_config *c) { return 0; }
 
 
 // configuration of the filesystem is provided by this struct
-const struct lfs_config cfg = {
+struct lfs_config cfg = {
     // block device operations
     .read  = lfsp_read_block,
     .prog  = lfsp_prog_block,
@@ -556,6 +559,7 @@ struct DiskImage {
 };
 DiskImage atariDisks[8] = {
     {"none", (DiskImage::DiskImageRawData *)diskImg}, 
+    {"none", (DiskImage::DiskImageRawData *)diskImg}, 
 };
 
 
@@ -664,7 +668,7 @@ void IRAM_ATTR core0Loop() {
                     dcb->DBUFHI = 0x40;
                     dcb->DBUFLO = 0x00;
                     dcb->DDEVIC = 0x31; 
-                    dcb->DUNIT = 1;
+                    dcb->DUNIT = 2;
                     dcb->DAUX1++; 
                     dcb->DAUX2 = 0;
                     dcb->DCOMND = 0x52;
@@ -838,17 +842,41 @@ void IRAM_ATTR core0Loop() {
                                 pbiRequest->carry = 1;
                             }
                             int sectorOffset = 16 + (sector - 1) * sectorSize;
-                            if (dcb->DCOMND== 0x52) {  // READ sector
-                                for(int n = 0; n < sectorSize; n++) 
-                                    atariRam[addr + n] = disk->data[sectorOffset + n];
-                                //memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
-                                pbiRequest->carry = 1;
+                            if (dcb->DCOMND == 0x52) {  // READ sector
+                                if (dcb->DUNIT == 1) {
+                                    for(int n = 0; n < sectorSize; n++) 
+                                        atariRam[addr + n] = disk->data[sectorOffset + n];
+                                    //memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
+                                    pbiRequest->carry = 1;
+                                } else if (dcb->DUNIT == 2) { 
+                                    enableCore0WDT();
+                                    portENABLE_INTERRUPTS();
+                                    lfs_file_seek(&lfs, &lfs_diskImg, sectorOffset, LFS_SEEK_SET);
+                                    size_t r = lfs_file_read(&lfs, &lfs_diskImg, &atariRam[addr], sectorSize);                                    
+                                    //printf("lfs_file_read() returned %d\n", r);
+                                    fflush(stdout);
+                                    portDISABLE_INTERRUPTS();
+                                    disableCore0WDT();
+                                    pbiRequest->carry = 1;
+                                }
                             }
-                            if (dcb->DCOMND== 0x50) {  // WRITE sector
-                                for(int n = 0; n < sectorSize; n++) 
-                                    disk->data[sectorOffset + n] = atariRam[addr + n];
-                                //memcpy(&disk->data[sectorOffset], &atariRam[addr], sectorSize);
-                                pbiRequest->carry = 1;
+                            if (dcb->DCOMND == 0x50) {  // WRITE sector
+                                if (dcb->DUNIT == 1) {
+                                    for(int n = 0; n < sectorSize; n++) 
+                                        disk->data[sectorOffset + n] = atariRam[addr + n];
+                                    //memcpy(&disk->data[sectorOffset], &atariRam[addr], sectorSize);
+                                    pbiRequest->carry = 1;
+                                } else if (dcb->DUNIT == 2) { 
+                                    enableCore0WDT();
+                                    portENABLE_INTERRUPTS();
+                                    lfs_file_seek(&lfs, &lfs_diskImg, sectorOffset, LFS_SEEK_SET);
+                                    size_t r = lfs_file_write(&lfs, &lfs_diskImg, &atariRam[addr], sectorSize);                                    
+                                    //printf("lfs_file_write() returned %d\n", r);
+                                    fflush(stdout);
+                                    portDISABLE_INTERRUPTS();
+                                    disableCore0WDT();
+                                    pbiRequest->carry = 1;
+                                }
                             }
                         }
                     }
@@ -1003,8 +1031,8 @@ void threadFunc(void *) {
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     uint32_t oldint;
     if (opt.maskCore0Int) { 
-        disableCore0WDT();
         portDISABLE_INTERRUPTS();
+        disableCore0WDT();
         _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
         //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
     }
@@ -1024,9 +1052,9 @@ void threadFunc(void *) {
     while(XTHAL_GET_CCOUNT() - startTsc < 2 * 24 * 1000000) {}
 
     if (opt.maskCore0Int) { 
+        enableCore0WDT();
         portENABLE_INTERRUPTS();
         _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi;
-        enableCore0WDT();
         //__asm__("wsr %0,PS" : : "r"(oldint));
     }
 
@@ -1181,6 +1209,8 @@ void threadFunc(void *) {
     printf("busMask: %08x bus is %s\n", busMask, (busMask & dataMask) == dataMask ? "ENABLED" : "DISABLED");
     
     printf("GIT: " GIT_VERSION "\n");
+    printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
     printf("DONE %.2f\n", millis() / 1000.0);
     delay(100);
     
@@ -1255,11 +1285,17 @@ void setup() {
         printf("Formatting LFS\n");
         lfs_format(&lfs, &cfg);
         lfs_mount(&lfs, &cfg);
-    } else {
-        printf("LFS mounted\n");
-    }
-
+        lfs_file_open(&lfs, &lfs_diskImg, "disk2.atr", LFS_O_RDWR | LFS_O_CREAT);
+        lfs_file_write(&lfs, &lfs_diskImg, &diskImg, sizeof(diskImg));
+        lfs_file_sync(&lfs, &lfs_diskImg);
+        lfs_file_close(&lfs, &lfs_diskImg);
+    } 
+    printf("LFS mounted: %d total bytes\n", cfg.block_size * cfg.block_count);
+    lfs_file_open(&lfs, &lfs_diskImg, "disk2.atr", LFS_O_RDWR | LFS_O_CREAT);
+    size_t fsize = lfs_file_size(&lfs, &lfs_diskImg);
+    printf("Opened disk2.atr file size %d bytes\n", fsize);
     printf("boot_count: %d\n", lfs_updateTestFile());
+    printf("free ram: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
 
 #endif
 
