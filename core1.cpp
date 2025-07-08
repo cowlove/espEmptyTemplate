@@ -34,9 +34,13 @@
 
 //SYSTEM_CORE_1_CONTROL_0_REG
 #define RPACK(r0, data) ((r0 & 0x3fffff) | (data << 24))
+
+static uint8_t dummyWriteBank[bankSize];
+
 void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
-        banks[i] = &atariRam[64 * 1024 / nrBanks * i];
+        banks[i] = &dummyWriteBank[0];
+        banks[i + nrBanks] = &atariRam[64 * 1024 / nrBanks * i];
     };
     for(int i = 0; i < nrBanks; i++) {
         bankEnable[i] = mpdMask | extSel_Mask; 
@@ -56,8 +60,6 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
     RAM_VOLATILE uint8_t * const bankD800[2] = { &pbiROM[0], &atariRam[0xd800]};
-
-    static uint8_t dummyStore;
  
     do {    
         //while((dedic_gpio_cpu_ll_read_in() & dedicClockMask) != 0) {}
@@ -66,7 +68,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         int mpdSelect = (atariRam[0xd1ff] & 1) ^ 1;
         //const uint32_t fetchedBusMask = busMask;
         uint32_t setMask = (mpdSelect << mpdShift) | busMask;
-        banks[0xd800 >> bankShift] = bankD800[mpdSelect];
+        banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
         __asm__ __volatile__("nop");
         //__asm__ __volatile__("nop");
 
@@ -77,8 +79,8 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         // TODO: we could rearrange the address pins with casInh_pin directly above
         // addrPin15 so that we could just mask and shift r0 instead of using dedic_
         // to remap the order for us.  Looks like it would save a cycle 
-        int bx = (r0 & (casInh_Mask | addrMask)) >> (casInh_Shift - 5); // timing approximateion
-        const uint32_t pinEnableMask = bankEnable[bx];
+        int bank = (r0 & (casInh_Mask | addrMask)) >> (casInh_Shift - 5); // timing approximateion
+        const uint32_t pinEnableMask = bankEnable[bank];
         
         if ((r0 & (readWriteMask)) != 0) {
 #if 1
@@ -89,7 +91,6 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             }
 #endif
             uint16_t addr = (r0 & addrMask) >> addrShift;
-            int bank = addr >> bankShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
             uint8_t data = *ramAddr;
             REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);             
@@ -102,9 +103,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         
         } else { //////////////// XXWRITE /////////////    
             uint16_t addr = (r0 & addrMask) >> addrShift; 
-            RAM_VOLATILE uint8_t *storeAddr = banks[addr >> bankShift] + (addr & ~bankMask);
-            if ((pinEnableMask & extSel_Mask) != extSel_Mask)
-                storeAddr = &dummyStore;
+            RAM_VOLATILE uint8_t *storeAddr = banks[bank] + (addr & ~bankMask);
 
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 #ifdef BUS_MONITOR

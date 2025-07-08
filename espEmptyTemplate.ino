@@ -67,12 +67,12 @@ IRAM_ATTR inline void delayTicks(int ticks) {
     while(XTHAL_GET_CCOUNT() - startTsc < ticks) {}
 }
 
-DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks];
-DRAM_ATTR uint32_t bankEnable[nrBanks * 2] = {0x0};
+DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 2];
+DRAM_ATTR uint32_t bankEnable[nrBanks * 2];
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
-DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
+//DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
 //#include "joust.h"
-};
+//};
 DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024] = {
 #include "pbirom.h"
 };
