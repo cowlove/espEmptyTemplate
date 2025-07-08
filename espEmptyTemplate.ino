@@ -498,6 +498,7 @@ struct PbiIocb {
     uint8_t loc004d;
     uint8_t loc004e;
     uint8_t loc004f;
+    uint8_t romAddrSignatureCheck;
 };
 
 template<class T> 
@@ -596,7 +597,26 @@ void IRAM_ATTR core0Loop() {
     enableBus();
 
     while(1) {
-        uint32_t stsc;
+        uint32_t stsc = XTHAL_GET_CCOUNT();
+        if (1) {
+            static const int tbSize = 128;
+            uint32_t *traceBuf =(uint32_t *) heap_caps_aligned_alloc(64, tbSize * 4,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+            uint32_t *tbPtr = traceBuf;
+            uint32_t r0, lastR0 = 0;
+            int runSec = 5;
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000000 * 1) {}
+            for(int i = 0; i < numProfilers; i++) profilers[i].clear();
+            
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000000 * runSec && tbPtr <= traceBuf + tbSize) {
+                do { 
+                    r0 = REG_READ(SYSTEM_CORE_1_CONTROL_1_REG);
+                } while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000000 * runSec && r0 == lastR0);  
+                lastR0 = r0;
+                *tbPtr = 40;
+                //tbPtr++;
+            }
+            break;
+        }
         if (1) { // slow loop down to 1ms
             stsc = XTHAL_GET_CCOUNT();
             while(XTHAL_GET_CCOUNT() - stsc < 240 * 2000) {}

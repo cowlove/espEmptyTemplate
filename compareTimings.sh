@@ -1,11 +1,2 @@
 #!/bin/bash
-stdbuf -o0 make \
-    PORT=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_B4\:3A\:45\:A5\:C4\:2C-if00 \
-    "DEF=-DFAKE_CLOCK $1" \
-    u1c | stdbuf -i0 -o0 cat_until "DONE" | tee cat.timings.out
-
-grep HIST cat.timings.out  > timing.txt
-gnuplot -e "set term dumb; plot 'timing_benchmark.txt' u 1:2 w l ls 1, 'timing_benchmark.txt' u 1:3 w l ls 1, 'timing.txt' u 1:2 w l ls 2, 'timing.txt' u 1:3 w l ls 3;"
-
-#gnuplot -e "set term dumb; plot 'timing_committed.txt' u 1:2 w l, 'timing.txt' u 1:2 w l;"
-
+gnuplot -e "set term dumb; plot '$1' u 1:2 w l ls 1, '$1' u 1:3 w l ls 1, '$2' u 1:2 w l ls 2, '$2' u 1:3 w l ls 3;"

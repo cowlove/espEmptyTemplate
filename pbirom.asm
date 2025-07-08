@@ -14,8 +14,10 @@ NEWDEV  =   $E486
 
 IOCBCHIDZ = $20
 
-* = $d800
-;* = $0600
+#ifndef BASE_ADDR
+BASE_ADDR = $d800
+#endif
+* = BASE_ADDR
 
 .word    $fff,                       // D800 ROM cksum lo
 .byt    $01,                        // D802 ROM version
@@ -68,13 +70,17 @@ ESP32_IOCB_LOC004E
 ESP32_IOCB_LOC004F
     .byt $ee
 
+ESP32_IOCB_CHECKADDR
+    .byt * / $100 
+
 TEST_ENTRY
     PLA
-    JMP SAFE_WAIT
+    LDA #7
+    JMP PBI_PUTB
 
 PBI_INIT
-    nop
-    nop
+    lda #$0f    //; set border white as indicator 
+    sta 712 
     lda PDVMSK  //;Get enabled device flags
     ora #1      //;Set bit 0.
     sta PDVMSK  //;& replace.
@@ -156,28 +162,14 @@ PBI_SPECIAL
     sta ESP32_IOCB_A
     lda #6 // cmd close
 PBI_ALL
+    // cmd placed in A by entry stubs
     sta ESP32_IOCB_CMD
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y
     lda CRITIC
     sta ESP32_IOCB_CRITIC
 
-    ///////////////////////////////////////////////////
-    // TODO: replace this PBI_WAITREQ loop with:
-    // jsr SAFE_WAIT
-    // OPTION 1 
-#if 0
-    lda #1
-    sta ESP32_IOCB_REQ
-PBI_WAITREQ
-    lda ESP32_IOCB_REQ
-    bne PBI_WAITREQ
-
-#else
-    //////////////////////////////////////////////////
-    // OPTION 2
     jsr SAFE_WAIT
-#endif
 
     // save and then mask interrupts
     php 
@@ -209,7 +201,7 @@ PBI_WAITREQ
 
     lda #9 // remap command
     STA ESP32_IOCB_CMD
-    lda #1
+    lda #1 // TODO: this seems unneeded
     jsr SAFE_WAIT
 
     lda ESP32_IOCB_NMIEN
@@ -230,7 +222,6 @@ NO_CLI
 //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 // Simple test code copied into page 6 by PBI_INIT 
 
-#if 1
 COPY_BEGIN
 TEST_MPD
     pla
@@ -248,7 +239,6 @@ L3
     bpl L2
     rts
 COPY_END
-#endif 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Busy wait in RAM while the PBI ROM is mapped out
@@ -266,7 +256,7 @@ push_prog_loop
 
     tsx       ; stack pointer now points to newly-placed program - 1 
 
-    lda #(return_from_stackprog - 1) / $100     // push JUMP_BACK -1 onto stack for RTS 
+    lda #(return_from_stackprog - 1) / $100     // push (return_from_stackprog - 1) onto stack for RTS 
     pha                                         // from mini-program
     lda #(return_from_stackprog - 1) & $ff      // 
     pha    

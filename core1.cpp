@@ -32,6 +32,8 @@
 
 #pragma GCC optimize("O3")
 
+//SYSTEM_CORE_1_CONTROL_0_REG
+#define RPACK(r0, data) ((r0 & 0x3fffff) | (data << 24))
 void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
     for(int i = 0; i < nrBanks; i++) {
         banks[i] = &atariRam[64 * 1024 / nrBanks * i];
@@ -95,7 +97,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
 #ifdef BUS_MONITOR
             busMon.add(r0);
 #endif
-
+            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0);
             //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
         
         } else { //////////////// XXWRITE /////////////    
@@ -110,13 +112,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
 #else
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
-            __asm__ __volatile__("nop");
+            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
             __asm__ __volatile__("nop");
@@ -128,7 +124,8 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             // Timing critical point: >= 90 ticks before reading data lines 
             PROFILE(0, XTHAL_GET_CCOUNT() - tscFall); 
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
-            *storeAddr = (r1 >> dataShift);
+            uint8_t data = (r1 >> dataShift);
+            *storeAddr = data; 
         } 
     } while(1);
 }
