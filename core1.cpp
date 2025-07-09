@@ -84,10 +84,10 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         const uint32_t pinEnableMask = bankEnable[bank];
         
         if ((r0 & (readWriteMask)) != 0) {
-            REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);
             uint16_t addr = (r0 & addrMask) >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
             uint8_t data = *ramAddr;
+            REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);
             REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);
 
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
