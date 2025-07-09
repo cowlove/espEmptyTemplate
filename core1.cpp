@@ -45,6 +45,10 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         bankEnable[i] = mpdMask | extSel_Mask; 
         bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask;
     };
+
+    //banks[0xd100 >> bankShift] = &atariRam[0xd100];
+    bankEnable[0xd100 >> bankShift] |= dataMask;
+
     //atariRam[0xd803] = 0x00;
 
     for(auto i : pins) gpio_ll_input_enable(NULL, i);
@@ -64,7 +68,9 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         int mpdSelect = (atariRomWrites[0xd1ff] & 1) ^ 1;
-        banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
+        //banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
+        //banks[(0xd800 >> bankShift) + nrBanks + 1] = bankD800[mpdSelect] + bankSize;
+
         uint32_t setMask = (mpdSelect << mpdShift) | busMask;
 
         // Timing critical point #0: ~10 ticks before the disabling the data lines 
@@ -81,22 +87,24 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         __asm__ __volatile__ ("nop");
         __asm__ __volatile__ ("nop");
         __asm__ __volatile__ ("nop");
+
         // Timing critical point #0: >= 30 ticks before reading the address/control lines
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         PROFILE1(XTHAL_GET_CCOUNT() - tscFall); 
 
-        int bank = (r0 & (casInh_Mask | addrMask)) >> (casInh_Shift - 5); 
-        uint32_t pinEnableMask = bankEnable[bank];
-        
-        if ((r0 & (readWriteMask)) != 0) {
-            uint16_t addr = (r0 & addrMask) >> addrShift;
-#if 0
-            if (addr == 0xd1ff) { 
-                pinEnableMask = mpdMask | extSel_Mask | interruptMask;
-                //pinEnableMask = mpdMask | dataMask | extSel_Mask | interruptMask;
-            }
+        int bank = (r0 & (casInh_Mask | addrMask)) >> (casInh_Shift - bankBits); 
+        const uint32_t pinEnableMask = bankEnable[bank]; // | globalBankEnable 
+
+#ifdef WDTW_1
+        uint16_t addr = r0 >> addrShift;
+        RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
 #endif
+
+        if ((r0 & (readWriteMask)) != 0) {
+        #ifndef WDTW_1
+            uint16_t addr = r0 >> addrShift;
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
+        #endif
             uint8_t data = *ramAddr;
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);
             REG_WRITE(GPIO_OUT1_REG, (data << dataShift) | setMask);
@@ -104,28 +112,32 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
             PROFILE2(XTHAL_GET_CCOUNT() - tscFall); 
             //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0);
+            banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
+            banks[(0xd800 >> bankShift) + nrBanks + 1] = bankD800[mpdSelect] + bankSize;
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
             // Timing critical point #4:  All work done by 111 ticks
             PROFILE4(XTHAL_GET_CCOUNT() - tscFall); 
     
         } else { //////////////// XXWRITE /////////////    
-            uint16_t addr = (r0 & addrMask) >> addrShift; 
-            RAM_VOLATILE uint8_t *storeAddr = banks[bank] + (addr & ~bankMask);
-
+        #ifndef WDTW_1
+            uint16_t addr = r0 >> addrShift;
+            RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
+        #endif
             //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
             //__asm__ __volatile__ ("nop");
             //__asm__ __volatile__ ("nop");
 
-            //banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
+            banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
+            banks[(0xd800 >> bankShift) + nrBanks + 1] = bankD800[mpdSelect] + bankSize;
             //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
-            while(XTHAL_GET_CCOUNT() - tscFall < 85) {}
+            while(XTHAL_GET_CCOUNT() - tscFall < 83) {}
 
             // Timing critical point #3: Wait at least 80 ticks before reading data lines 
             PROFILE3(XTHAL_GET_CCOUNT() - tscFall); 
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
             uint8_t data = (r1 >> dataShift);
-            *storeAddr = data;
+            *ramAddr = data;
             
             // Timing critical point #4:  All work done by 111 ticks
             PROFILE5(XTHAL_GET_CCOUNT() - tscFall); 

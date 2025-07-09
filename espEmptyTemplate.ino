@@ -88,6 +88,8 @@ IRAM_ATTR void enableBus() {
         bankEnable[i] = mpdMask | extSel_Mask | interruptMask;
         bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask | interruptMask;
     }
+    bankEnable[0xd100 >> bankShift] |= dataMask;
+
     delayTicks(240 * 100);
 }
 
@@ -97,6 +99,9 @@ IRAM_ATTR void enableSingleBank(int b) {
 }
 
 IRAM_ATTR void disableBus() {
+    // TODO: Need to disable interrupt bit in PDIMSK before detaching the bus
+    // TODO need to use a new global busEnable mask to disable the bus rather
+    // than going through all 256 page table entries 
     delayTicks(240 * 100);    
     for(int i = 0; i < nrBanks; i++) { 
         bankEnable[i] = mpdMask | interruptMask;
@@ -748,7 +753,9 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     // maybe just fake them and don't bother with a two-stage completion process  
 
     #ifdef BUS_DETACH
-    enableSingleBank(0xd800 >> bankShift);
+    for(int n = 0; i < 2048 / bankSize; i++) { 
+        enableSingleBank((0xd800 >> bankShift) + i);
+    }
     #endif
     //busMon.enable = false;
     while(busMon.available()) { 
@@ -1469,7 +1476,7 @@ void setup() {
 #if 1
         // write 0xd1ff to address pins to simulate worst-case slowest address decode
         for(int bit = 0; bit < 16; bit ++)  
-            pinMode(addr0Pin + bit, ((0xd1ff >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
+            pinMode(addr0Pin + bit, ((0xd1fe >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
 #endif 
 
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);

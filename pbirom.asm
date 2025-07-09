@@ -20,10 +20,12 @@ BASE_ADDR = $d800
 
 .word   $ffff,                      // D800 ROM cksum lo
 .byt    $01,                        // D802 ROM version
+MPID1
 .byt    $80,                        // D803 ID num 1, must be $80
 .byt    $01,                        // D804 Device Type
 jmp PBI_IO                          // D805-D807 Jump vector entry point for SIO-similar IO 
 jmp PBI_ISR                         // D808-D80A Jump vector entry point for external PBI interrupt handler
+MPID2
 .byt    $91,                        // D80B ID num 2, must be $91
 .byt    DEVNAM,                     // D80C Device Name (ASCII)
 .word PBI_OPEN - 1
@@ -122,7 +124,7 @@ PBI_INIT
     sta PDVMSK  
     lda PDIMSK  // enable this device's bit in PDIMSK
     // XXX disable interrupts until working
-    // ora #PDEVNUM 
+    //ora #PDEVNUM 
     sta PDIMSK
 
  ;Put device name in Handler table HATABS
@@ -174,14 +176,9 @@ PBI_IO
     jmp PBI_ALL
 
 PBI_ISR     
-    // TODO: a PBI interrupt could interrupt another pbi command in process 
-    // need to use a separate ESP32_IOCB reserved just for the interrupt 
-    // could make PBI_ALL take x as an offset index to select which IOCB 
-    // to use 
-    
-    // XXX working on figuring out the ISR.  This is being called even when the interrupt line
-    // is held high.  If we just return with SEC, system hangs after the dos splash screen.
-    // If we return with clc, it hangs earlier with just 2 io requests.
+    // TODO: When bus is detached, 0xd1ff will read high and we will be 
+    // called to handle all NMI interrupts.  Need to mask off  Need to check  
+    //return with clc, it hangs earlier with just 2 io requests.
     //sec
     //rts
 

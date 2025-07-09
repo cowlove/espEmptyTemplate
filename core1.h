@@ -146,7 +146,8 @@ static const uint32_t copyDataMask = 0xff << copyDataShift;
 // TODO: so eventaully looks like: pin 0 = reset, pin 19 = casInh input, pin 20 = interrupt, pin 47 = MPD
 // TODO: although USB pins moving during ESP32 boot might cause conflict 
 // TODO: extend this generally, need to review which ESP32 pins are driven during boot or have strapping resistors   
-//
+// TODO: can we move all the address lines down by one pin to allow R/W to be the newest high
+//    bit in a bigger bank index?
 //                               +--Clock
 //                               | +---Refresh
 //                               | | +--- ADDR                               +-- CasInhAL
@@ -157,7 +158,7 @@ using std::vector;
 static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47,48};
 //static const int led_NO_Pin = -1;
 
-static const int bankBits = 5;
+static const int bankBits = 8;
 static const int nrBanks = 1 << bankBits;
 static const int bankSize = 64 * 1024 / nrBanks;
 static const uint16_t bankMask = 0xffff0000 >> bankBits;
