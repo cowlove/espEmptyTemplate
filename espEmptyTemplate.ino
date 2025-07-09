@@ -1218,7 +1218,7 @@ void threadFunc(void *) {
     
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
-    printf("DONE %10.2f GIT: " GIT_VERSION " Exit reason: %s\n", millis() / 1000.0, exitReason.c_str());
+    printf("DONE %10.2f GIT: " GIT_VERSION " " __TIME__ " Exit reason: %s\n", millis() / 1000.0, exitReason.c_str());
     delay(100);
     
     //ESP.restart();

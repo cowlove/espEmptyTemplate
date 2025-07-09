@@ -29,7 +29,7 @@
 
 #include "core1.h"
 
-#pragma GCC optimize("O1")
+#pragma GCC optimize("O3")
 
 //SYSTEM_CORE_1_CONTROL_0_REG
 #define RPACK(r0, data) ((r0 & 0x3fffff) | (data << 24))
@@ -65,7 +65,7 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
         uint32_t tscFall = XTHAL_GET_CCOUNT();
         int mpdSelect = (atariRomWrites[0xd1ff] & 1) ^ 1;
-        //const uint32_t fetchedBusMask = busMask;
+        banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
         uint32_t setMask = (mpdSelect << mpdShift) | busMask;
         //__asm__ __volatile__ ("nop");
 
@@ -88,7 +88,6 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
 
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
             PROFILE2(XTHAL_GET_CCOUNT() - tscFall); 
-            banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
             //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0);
             while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
@@ -99,12 +98,13 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
             uint16_t addr = (r0 & addrMask) >> addrShift; 
             RAM_VOLATILE uint8_t *storeAddr = banks[bank] + (addr & ~bankMask);
 
-            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
-            //__asm__ __volatile__ ("nop");
-            
-            while(XTHAL_GET_CCOUNT() - tscFall < 65) {}
             //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
-            banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
+            //__asm__ __volatile__ ("nop");
+            //__asm__ __volatile__ ("nop");
+
+            //banks[(0xd800 >> bankShift) + nrBanks] = bankD800[mpdSelect];
+            //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
+            while(XTHAL_GET_CCOUNT() - tscFall < 85) {}
 
             // Timing critical point #3: Wait at least 80 ticks before reading data lines 
             PROFILE3(XTHAL_GET_CCOUNT() - tscFall); 

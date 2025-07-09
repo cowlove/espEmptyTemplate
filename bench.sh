@@ -4,7 +4,7 @@ ARGS="DEF=-DTEST_SEC=6 -DPROFB $1"
 
 make PORT=${PORT} "${ARGS}"
 make PORT=${PORT} "${ARGS}" upload
-make PORT=${PORT} "${ARGS}" cat | cat_until "DONE" |  tee timings.out
+make PORT=${PORT} "${ARGS}" cat | cat_until "DONE" |  tee timings.out 
 
 mv timing.txt timing.last.txt
 grep HIST timings.out  > timing.txt
