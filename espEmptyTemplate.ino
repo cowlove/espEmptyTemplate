@@ -1050,14 +1050,17 @@ void threadFunc(void *) {
     uint8_t lastRamValue = 0;
 
     core0Loop();
+    disableBus();
+    startTsc = XTHAL_GET_CCOUNT();
+    while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {}
 
     stop = true;
-#ifdef FAKE_CLOCK
+//#ifdef FAKE_CLOCK
     REG_SET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_RUNSTALL);
-#endif
-    int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
+//#endif
     startTsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - startTsc < 2 * 24 * 1000000) {}
+    while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {}
+    int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
 
     if (opt.maskCore0Int) { 
         enableCore0WDT();
@@ -1204,6 +1207,28 @@ void threadFunc(void *) {
     for(int i = 0x600; i < 0x620; i++) { 
         printf("%02x ", atariRam[i]);
     }
+    printf("\n");
+
+#ifndef FAKE_CLOCK
+    if (1) {
+        uint16_t savmsc = (atariRam[89] << 8) + atariRam[88];
+        printf("SCREEN 00 memory at SAVMSC(%04x):\n", savmsc);
+        printf("SCREEN 01 +----------------------------------------+\n");
+        for(int row = 0; row < 24; row++) { 
+            printf("SCREEN %02d |", row + 2);
+            for(int col = 0; col < 40; col++) { 
+                uint16_t addr = savmsc + row * 40 + col;
+                int c = atariRam[addr] & 127;
+                if (c < 64) c += 32;
+                else if (c < 96) c -= 64;
+                printf("%c", c);
+            }
+            printf("|\n");
+        }
+        printf("SCREEN 27 +----------------------------------------+\n");
+    }
+#endif
+
     printf("\n0xd1ff: %02x\n", atariRam[0xd1ff]);
     printf("0xd820: %02x\n", atariRam[0xd820]);
 #ifdef BUS_MONITOR
