@@ -81,7 +81,7 @@ DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
 
-BUSCTL_VOLATILE uint32_t busMask = extSel_Mask;
+BUSCTL_VOLATILE uint32_t busMask = extSel_Mask | interruptMask;
 
 IRAM_ATTR void enableBus() { 
     for(int i = 0; i < nrBanks; i++) { 
@@ -440,7 +440,7 @@ struct AtariIO {
             bankEnable[(0x8000>>bankShift) + nrBanks] = dataMask | mpdMask | mpdMask;
         }
         if (filename == "J:INT") {
-            busMask |= interruptMask;
+            busMask &= ~interruptMask;
         }
 #else 
     void open() { 
@@ -884,7 +884,7 @@ void IRAM_ATTR core0Loop() {
 #endif // ENABLE_SIO 
                 } else if (pbiRequest->cmd == 8) { // IRQ
                     pbiRequest->y = 1; // assume success
-                    busMask &= ~interruptMask; // turn off interrupt 
+                    busMask |= interruptMask; // turn off interrupt 
                     //REG_WRITE(GPIO_OUT1_W1TC_REG, interruptMask);
                     atariRam[712]++; // TMP: increment border color as visual indicator 
                     pbiRequest->carry = 1;

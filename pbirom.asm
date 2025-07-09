@@ -83,7 +83,7 @@ PBI_INIT
     ora #PDEVNUM
     sta PDVMSK  
     lda PDIMSK  // enable this device's bit in PDIMSK
-    //ora #PDEVNUM // tmp - disable interrupts until we figure why they're looping 
+    ora #PDEVNUM 
     sta PDIMSK
 
  ;Put device name in Handler table HATABS
