@@ -81,16 +81,21 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         __asm__ __volatile__ ("nop");
         __asm__ __volatile__ ("nop");
         __asm__ __volatile__ ("nop");
-
         // Timing critical point #0: >= 30 ticks before reading the address/control lines
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         PROFILE1(XTHAL_GET_CCOUNT() - tscFall); 
 
         int bank = (r0 & (casInh_Mask | addrMask)) >> (casInh_Shift - 5); 
-        const uint32_t pinEnableMask = bankEnable[bank];
+        uint32_t pinEnableMask = bankEnable[bank];
         
         if ((r0 & (readWriteMask)) != 0) {
             uint16_t addr = (r0 & addrMask) >> addrShift;
+#if 0
+            if (addr == 0xd1ff) { 
+                pinEnableMask = mpdMask | extSel_Mask | interruptMask;
+                //pinEnableMask = mpdMask | dataMask | extSel_Mask | interruptMask;
+            }
+#endif
             RAM_VOLATILE uint8_t *ramAddr = banks[bank] + (addr & ~bankMask);
             uint8_t data = *ramAddr;
             REG_WRITE(GPIO_ENABLE1_W1TS_REG, pinEnableMask);

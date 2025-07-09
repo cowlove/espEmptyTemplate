@@ -69,5 +69,5 @@ pbirom.h:  pbirom.o65
 	./bin2src.py pbirom.o65 > pbirom.h
 
 pbirom.o65:  pbirom.asm
-	xa pbirom.asm -o pbirom.o65
+	xa -C pbirom.asm -o pbirom.o65
 

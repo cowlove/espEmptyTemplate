@@ -88,7 +88,6 @@ IRAM_ATTR void enableBus() {
         bankEnable[i] = mpdMask | extSel_Mask | interruptMask;
         bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask | interruptMask;
     }
-    //busMask = dataMask | extSel_Mask | mpdMask;
     delayTicks(240 * 100);
 }
 
@@ -100,10 +99,9 @@ IRAM_ATTR void enableSingleBank(int b) {
 IRAM_ATTR void disableBus() {
     delayTicks(240 * 100);    
     for(int i = 0; i < nrBanks; i++) { 
-        bankEnable[i] = mpdMask;
-        bankEnable[i + nrBanks] = mpdMask;
+        bankEnable[i] = mpdMask | interruptMask;
+        bankEnable[i + nrBanks] = mpdMask | interruptMask;
     }
-    //busMask = extSel_Mask | mpdMask;
 }
 
 std::string vsfmt(const char *format, va_list args);
@@ -440,7 +438,7 @@ struct AtariIO {
             bankEnable[(0x8000>>bankShift) + nrBanks] = dataMask | mpdMask | mpdMask;
         }
         if (filename == "J:INT") {
-            busMask &= ~interruptMask;
+            busMask = busMask & (~interruptMask);
         }
 #else 
     void open() { 
@@ -487,17 +485,20 @@ struct {
 
 struct PbiIocb {
     uint8_t req;
+    uint8_t cmd;
     uint8_t a;
     uint8_t x;
+
     uint8_t y;
-    uint8_t cmd;
     uint8_t carry;
     uint8_t critic;
     uint8_t psp;
+
     uint8_t nmien;
     uint8_t rtclok1;
     uint8_t rtclok2;
     uint8_t rtclok3;
+
     uint8_t loc004d;
     uint8_t loc004e;
     uint8_t loc004f;
@@ -566,13 +567,202 @@ DiskImage atariDisks[8] = {
 
 int maxBufsUsed = 0;
 async_memcpy_handle_t handle = NULL;
-volatile int diskReadCount = 0;
+int diskReadCount = 0, pbiInterruptCount = 0;
 string exitReason = "";
 
 // Apparently can't make any function calls from the core0 loops, even inline.  Otherwise it breaks 
 // timing on the core1 loop
 
+void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) { 
+    busMon.enable = true;
+    structLogs.pbi.add(*pbiRequest);
+    while(busMon.available()) { busMon.get(); }                
+    diskReadCount++;
+#ifdef BUS_DETACH
+    // Disable PBI memory device 
+    disableBus();
+    if (1) { 
+        enableCore0WDT();
+        portENABLE_INTERRUPTS();
+        // lfs_ may call printf();
+        diskReadCount = lfs_updateTestFile();
+        fflush(stdout);
+        portDISABLE_INTERRUPTS();
+        disableCore0WDT();
+    }
+    if (1) { 
+        enableCore0WDT();
+        portENABLE_INTERRUPTS();
+        printf("IO request: ");
+        StructLog<PbiIocb>::printEntry(*pbiRequest);
+        fflush(stdout);
+        portDISABLE_INTERRUPTS();
+        disableCore0WDT();
+    }
+#endif
+    AtariIOCB *iocb = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + pbiRequest->x]; // todo validate x bounds
+    //pbiRequest->y = 1; // assume success
+    //pbiRequest->carry = 0; // assume fail 
+    if (pbiRequest->cmd == 1) { // open
+        pbiRequest->y = 1; // assume success
+        pbiRequest->carry = 0; // assume fail 
+        uint16_t addr = ((uint16_t )atariMem.ziocb->ICBAH) << 8 | atariMem.ziocb->ICBAL;
+#ifdef SIM_KEYPRESS_FILE
+        string filename;
+        for(int i = 0; i < 32; i++) { 
+            uint8_t ch = atariRam[addr + i];
+            if (ch == 155) break;
+            filename += ch;    
+        } 
+        structLogs.opens.add(filename);
+        //structLogs.ziocb.add(*atariMem.ziocb);
+        //
+        fakeFile.open(filename);
+#else
+        fakeFile.open();
+        structLogs.iocb.add(*iocb);
+#endif
+        pbiRequest->carry = 1; 
+    } else if (pbiRequest->cmd == 2) { // close
+        pbiRequest->y = 1; // assume success
+        pbiRequest->carry = 1; 
+    } else if (pbiRequest->cmd == 3) { // get
+        pbiRequest->y = 1; // assume success
+        int c = fakeFile.get();
+        if (c < 0) 
+            pbiRequest->y = 136;
+        else
+            pbiRequest->a = c; 
+        pbiRequest->carry = 1; 
+    } else if (pbiRequest->cmd == 4) { // put
+        pbiRequest->y = 1; // assume success
+        if (fakeFile.put(pbiRequest->a) < 0)
+            pbiRequest->y = 136;
+        pbiRequest->carry = 1; 
+    } else if (pbiRequest->cmd == 5) { // status 
+        pbiRequest->y = 1; // assume success
+        pbiRequest->carry = 0; // assume fail 
+    } else if (pbiRequest->cmd == 6) { // special 
+        pbiRequest->y = 1; // assume success
+        pbiRequest->carry = 0; // assume fail 
+    } else if (pbiRequest->cmd == 7) { // low level io, see DCB
+#ifdef ENABLE_SIO
+        pbiRequest->y = 1; // assume success
+        pbiRequest->carry = 0; // assume fail 
+        AtariDCB *dcb = atariMem.dcb;
+        uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
+        int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
+        structLogs.dcb.add(*dcb);
+#ifdef BUS_DETACH
+        if (1) { 
+            enableCore0WDT();
+            portENABLE_INTERRUPTS();
+            printf("DCB: ");
+            StructLog<AtariDCB>::printEntry(*dcb);
+            fflush(stdout);
+            portDISABLE_INTERRUPTS();
+            disableCore0WDT();
+        }
+#endif
+        if (dcb->DDEVIC == 0x31 && dcb->DUNIT >= 1 && dcb->DUNIT < sizeof(atariDisks)/sizeof(atariDisks[0]) + 1) {  // Device D1:
+            DiskImage::DiskImageRawData *disk = atariDisks[dcb->DUNIT - 1].image; 
+            if (disk != NULL) { 
+                int sectorSize = disk->header.sectorSize;
+                if (dcb->DCOMND == 0x53) { // SIO status command
+                    // drive status https://www.atarimax.com/jindroush.atari.org/asio.html
+                    atariRam[addr+0] = (sectorSize == 0x100) ? 0x10 : 0x00; // bit 0 = frame err, 1 = cksum err, wr err, wr prot, motor on, sect size, unused, med density  
+                    atariRam[addr+1] = 0xff; // inverted bits: busy, DRQ, data lost, crc err, record not found, head loaded, write pro, not ready 
+                    atariRam[addr+2] = 0xff; // timeout for format 
+                    atariRam[addr+3] = 0xff; // copy of wd
+                    pbiRequest->carry = 1;
+                }
+                int sectorOffset = 16 + (sector - 1) * sectorSize;
+                if (dcb->DCOMND == 0x52) {  // READ sector
+                    if (dcb->DUNIT == 1) {
+                        for(int n = 0; n < sectorSize; n++) 
+                            atariRam[addr + n] = disk->data[sectorOffset + n];
+                        //memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
+                        pbiRequest->carry = 1;
+                    } else if (dcb->DUNIT == 2) { 
+                        enableCore0WDT();
+                        portENABLE_INTERRUPTS();
+                        lfs_file_seek(&lfs, &lfs_diskImg, sectorOffset, LFS_SEEK_SET);
+                        size_t r = lfs_file_read(&lfs, &lfs_diskImg, &atariRam[addr], sectorSize);                                    
+                        //printf("lfs_file_read() returned %d\n", r);
+                        fflush(stdout);
+                        portDISABLE_INTERRUPTS();
+                        disableCore0WDT();
+                        pbiRequest->carry = 1;
+                    }
+                }
+                if (dcb->DCOMND == 0x50) {  // WRITE sector
+                    if (dcb->DUNIT == 1) {
+                        for(int n = 0; n < sectorSize; n++) 
+                            disk->data[sectorOffset + n] = atariRam[addr + n];
+                        //memcpy(&disk->data[sectorOffset], &atariRam[addr], sectorSize);
+                        pbiRequest->carry = 1;
+                    } else if (dcb->DUNIT == 2) { 
+                        enableCore0WDT();
+                        portENABLE_INTERRUPTS();
+                        lfs_file_seek(&lfs, &lfs_diskImg, sectorOffset, LFS_SEEK_SET);
+                        size_t r = lfs_file_write(&lfs, &lfs_diskImg, &atariRam[addr], sectorSize);                                    
+                        //printf("lfs_file_write() returned %d\n", r);
+                        fflush(stdout);
+                        portDISABLE_INTERRUPTS();
+                        disableCore0WDT();
+                        pbiRequest->carry = 1;
+                    }
+                }
+            }
+        }
+#endif // ENABLE_SIO 
+    } else if (pbiRequest->cmd == 8) { // IRQ
+        pbiRequest->y = 1; // assume success
+        busMask = busMask | interruptMask; // turn off interrupt 
+        //busMask = busMask & (~interruptMask); // turn off interrupt 
 
+        //REG_WRITE(GPIO_OUT1_W1TC_REG, interruptMask);
+        atariRam[712]++; // TMP: increment border color as visual indicator 
+        pbiInterruptCount++;
+        pbiRequest->carry = 1;
+    } else if (pbiRequest->cmd == 9) { // REMAP
+        // called after each command to re-enable the bus, we leave
+        // pbiRequest->{a,x,y,carry} containing the previous command results
+        #ifdef BUS_DETACH
+        atariRam[0x0012] = pbiRequest->rtclok1;
+        atariRam[0x0013] = pbiRequest->rtclok2;
+        atariRam[0x0014] = pbiRequest->rtclok3;
+        atariRam[0x004d] = pbiRequest->loc004d;
+        atariRam[0x004e] = pbiRequest->loc004e;
+        atariRam[0x004f] = pbiRequest->loc004f;
+        enableBus();
+        #endif
+    } 
+
+    // TODO:  enableSingleBank(0xd800>>bankShift), then return and let
+    // the 6502 copy out critical memory locations to struct, 
+    // then 6502 make another pbiReq->cmd == remap to tidy up
+    // changed ram locations and remap esp32 ram
+    //
+    // alternatively, if its only the clock locations that are changed,
+    // maybe just fake them and don't bother with a two-stage completion process  
+
+    #ifdef BUS_DETACH
+    enableSingleBank(0xd800 >> bankShift);
+    #endif
+    //busMon.enable = false;
+    while(busMon.available()) { 
+        uint32_t v = busMon.get();
+        if ((v & busMon.matchMask) == busMon.matchValue /*|| (v & readWriteMask) == 0*/) {
+            uint16_t addr = (v & addrMask) >> addrShift;
+            psram[addr]++;
+        }
+    } 
+
+    pbiRequest->req = 0;
+    //atariRam[0x0600] = 0;
+
+}
 void IRAM_ATTR core0Loop() { 
     int elapsedSec = 0;
     int pi = 0;
@@ -738,193 +928,8 @@ void IRAM_ATTR core0Loop() {
         if (1) {  
             //volatile
             PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
-            
-            if (pbiRequest->req != 0) {
-                busMon.enable = true;
-                structLogs.pbi.add(*pbiRequest);
-                while(busMon.available()) { busMon.get(); }                
-                diskReadCount++;
-#ifdef BUS_DETACH
-                // Disable PBI memory device 
-                disableBus();
-                if (1) { 
-                    enableCore0WDT();
-                    portENABLE_INTERRUPTS();
-                    // lfs_ may call printf();
-                    diskReadCount = lfs_updateTestFile();
-                    fflush(stdout);
-                    portDISABLE_INTERRUPTS();
-                    disableCore0WDT();
-                }
-                if (1) { 
-                    enableCore0WDT();
-                    portENABLE_INTERRUPTS();
-                    printf("IO request: ");
-                    StructLog<PbiIocb>::printEntry(*pbiRequest);
-                    fflush(stdout);
-                    portDISABLE_INTERRUPTS();
-                    disableCore0WDT();
-                }
-#endif
-                AtariIOCB *iocb = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + pbiRequest->x]; // todo validate x bounds
-                //pbiRequest->y = 1; // assume success
-                //pbiRequest->carry = 0; // assume fail 
-                if (pbiRequest->cmd == 1) { // open
-                    pbiRequest->y = 1; // assume success
-                    pbiRequest->carry = 0; // assume fail 
-                    uint16_t addr = ((uint16_t )atariMem.ziocb->ICBAH) << 8 | atariMem.ziocb->ICBAL;
-#ifdef SIM_KEYPRESS_FILE
-                    string filename;
-                    for(int i = 0; i < 32; i++) { 
-                        uint8_t ch = atariRam[addr + i];
-                        if (ch == 155) break;
-                        filename += ch;    
-                    } 
-                    structLogs.opens.add(filename);
-                    //structLogs.ziocb.add(*atariMem.ziocb);
-                    //
-                    fakeFile.open(filename);
-#else
-                    fakeFile.open();
-                    structLogs.iocb.add(*iocb);
-#endif
-                    pbiRequest->carry = 1; 
-                } else if (pbiRequest->cmd == 2) { // close
-                    pbiRequest->y = 1; // assume success
-                    pbiRequest->carry = 1; 
-                } else if (pbiRequest->cmd == 3) { // get
-                    pbiRequest->y = 1; // assume success
-                    int c = fakeFile.get();
-                    if (c < 0) 
-                        pbiRequest->y = 136;
-                    else
-                        pbiRequest->a = c; 
-                    pbiRequest->carry = 1; 
-                } else if (pbiRequest->cmd == 4) { // put
-                    pbiRequest->y = 1; // assume success
-                    if (fakeFile.put(pbiRequest->a) < 0)
-                        pbiRequest->y = 136;
-                    pbiRequest->carry = 1; 
-                } else if (pbiRequest->cmd == 5) { // status 
-                    pbiRequest->y = 1; // assume success
-                    pbiRequest->carry = 0; // assume fail 
-                } else if (pbiRequest->cmd == 6) { // special 
-                    pbiRequest->y = 1; // assume success
-                    pbiRequest->carry = 0; // assume fail 
-                } else if (pbiRequest->cmd == 7) { // low level io, see DCB
-#ifdef ENABLE_SIO
-                    pbiRequest->y = 1; // assume success
-                    pbiRequest->carry = 0; // assume fail 
-                    AtariDCB *dcb = atariMem.dcb;
-                    uint16_t addr = (((uint16_t)dcb->DBUFHI) << 8) | dcb->DBUFLO;
-                    int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
-                    structLogs.dcb.add(*dcb);
-#ifdef BUS_DETACH
-                    if (1) { 
-                        enableCore0WDT();
-                        portENABLE_INTERRUPTS();
-                        printf("DCB: ");
-                        StructLog<AtariDCB>::printEntry(*dcb);
-                        fflush(stdout);
-                        portDISABLE_INTERRUPTS();
-                        disableCore0WDT();
-                    }
-#endif
-                    if (dcb->DDEVIC == 0x31 && dcb->DUNIT >= 1 && dcb->DUNIT < sizeof(atariDisks)/sizeof(atariDisks[0]) + 1) {  // Device D1:
-                        DiskImage::DiskImageRawData *disk = atariDisks[dcb->DUNIT - 1].image; 
-                        if (disk != NULL) { 
-                            int sectorSize = disk->header.sectorSize;
-                            if (dcb->DCOMND == 0x53) { // SIO status command
-                                // drive status https://www.atarimax.com/jindroush.atari.org/asio.html
-                                atariRam[addr+0] = (sectorSize == 0x100) ? 0x10 : 0x00; // bit 0 = frame err, 1 = cksum err, wr err, wr prot, motor on, sect size, unused, med density  
-                                atariRam[addr+1] = 0xff; // inverted bits: busy, DRQ, data lost, crc err, record not found, head loaded, write pro, not ready 
-                                atariRam[addr+2] = 0xff; // timeout for format 
-                                atariRam[addr+3] = 0xff; // copy of wd
-                                pbiRequest->carry = 1;
-                            }
-                            int sectorOffset = 16 + (sector - 1) * sectorSize;
-                            if (dcb->DCOMND == 0x52) {  // READ sector
-                                if (dcb->DUNIT == 1) {
-                                    for(int n = 0; n < sectorSize; n++) 
-                                        atariRam[addr + n] = disk->data[sectorOffset + n];
-                                    //memcpy(&atariRam[addr], &disk->data[sectorOffset], sectorSize);
-                                    pbiRequest->carry = 1;
-                                } else if (dcb->DUNIT == 2) { 
-                                    enableCore0WDT();
-                                    portENABLE_INTERRUPTS();
-                                    lfs_file_seek(&lfs, &lfs_diskImg, sectorOffset, LFS_SEEK_SET);
-                                    size_t r = lfs_file_read(&lfs, &lfs_diskImg, &atariRam[addr], sectorSize);                                    
-                                    //printf("lfs_file_read() returned %d\n", r);
-                                    fflush(stdout);
-                                    portDISABLE_INTERRUPTS();
-                                    disableCore0WDT();
-                                    pbiRequest->carry = 1;
-                                }
-                            }
-                            if (dcb->DCOMND == 0x50) {  // WRITE sector
-                                if (dcb->DUNIT == 1) {
-                                    for(int n = 0; n < sectorSize; n++) 
-                                        disk->data[sectorOffset + n] = atariRam[addr + n];
-                                    //memcpy(&disk->data[sectorOffset], &atariRam[addr], sectorSize);
-                                    pbiRequest->carry = 1;
-                                } else if (dcb->DUNIT == 2) { 
-                                    enableCore0WDT();
-                                    portENABLE_INTERRUPTS();
-                                    lfs_file_seek(&lfs, &lfs_diskImg, sectorOffset, LFS_SEEK_SET);
-                                    size_t r = lfs_file_write(&lfs, &lfs_diskImg, &atariRam[addr], sectorSize);                                    
-                                    //printf("lfs_file_write() returned %d\n", r);
-                                    fflush(stdout);
-                                    portDISABLE_INTERRUPTS();
-                                    disableCore0WDT();
-                                    pbiRequest->carry = 1;
-                                }
-                            }
-                        }
-                    }
-#endif // ENABLE_SIO 
-                } else if (pbiRequest->cmd == 8) { // IRQ
-                    pbiRequest->y = 1; // assume success
-                    busMask |= interruptMask; // turn off interrupt 
-                    //REG_WRITE(GPIO_OUT1_W1TC_REG, interruptMask);
-                    atariRam[712]++; // TMP: increment border color as visual indicator 
-                    pbiRequest->carry = 1;
-                } else if (pbiRequest->cmd == 9) { // REMAP
-                    // called after each command to re-enable the bus, we leave
-                    // pbiRequest->{a,x,y,carry} containing the previous command results
-                    #ifdef BUS_DETACH
-                    atariRam[0x0012] = pbiRequest->rtclok1;
-                    atariRam[0x0013] = pbiRequest->rtclok2;
-                    atariRam[0x0014] = pbiRequest->rtclok3;
-                    atariRam[0x004d] = pbiRequest->loc004d;
-                    atariRam[0x004e] = pbiRequest->loc004e;
-                    atariRam[0x004f] = pbiRequest->loc004f;
-                    enableBus();
-                    #endif
-                } 
-
-                // TODO:  enableSingleBank(0xd800>>bankShift), then return and let
-                // the 6502 copy out critical memory locations to struct, 
-                // then 6502 make another pbiReq->cmd == remap to tidy up
-                // changed ram locations and remap esp32 ram
-                //
-                // alternatively, if its only the clock locations that are changed,
-                // maybe just fake them and don't bother with a two-stage completion process  
-
-                #ifdef BUS_DETACH
-                enableSingleBank(0xd800 >> bankShift);
-                #endif
-                //busMon.enable = false;
-                while(busMon.available()) { 
-                    uint32_t v = busMon.get();
-                    if ((v & busMon.matchMask) == busMon.matchValue /*|| (v & readWriteMask) == 0*/) {
-                        uint16_t addr = (v & addrMask) >> addrShift;
-                        psram[addr]++;
-                    }
-                } 
-           
-                pbiRequest->req = 0;
-                //atariRam[0x0600] = 0;
-            }
+            if (pbiRequest[0].req != 0) { handlePbiRequest(&pbiRequest[0]); }
+            if (pbiRequest[1].req != 0) { handlePbiRequest(&pbiRequest[1]); }
         }
 #if 0 
         //cycleCount++;
@@ -956,6 +961,7 @@ void IRAM_ATTR core0Loop() {
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
             
+            //busMask &= ~interruptMask;
 #ifndef FAKE_CLOCK
             if (elapsedSec == 15) { 
                 addSimKeypress("    \233E.\"J\233");
@@ -1033,6 +1039,12 @@ void threadFunc(void *) {
     if (0) { 
 
     }
+#ifdef BUS_DETACH
+    printf("BUS_DETACH is set\n");
+#else
+    printf("BUS_DETACH is NOT set\n");
+#endif
+    printf("opt.fakeClock %d opt.histRunSec %.2f\n", opt.fakeClock, opt.histRunSec);
     printf("GIT: " GIT_VERSION " \n");
 
 
@@ -1201,7 +1213,7 @@ void threadFunc(void *) {
     printf("atariRam[754] = %d\n", atariRam[754]);
     printf("pbiROM[0x100] = %d\n", pbiROM[0x100]);
     printf("atariRam[0xd900] = %d\n", atariRam[0xd900]);
-    printf("diskIoCount %d\n", diskReadCount);
+    printf("diskIoCount %d, pbiInterruptCount %d\n", diskReadCount, pbiInterruptCount);
     structLogs.print();
     printf("Page 6: ");
     for(int i = 0x600; i < 0x620; i++) { 
@@ -1218,8 +1230,9 @@ void threadFunc(void *) {
             printf("SCREEN %02d |", row + 2);
             for(int col = 0; col < 40; col++) { 
                 uint16_t addr = savmsc + row * 40 + col;
-                int c = atariRam[addr] & 127;
-                if (c < 64) c += 32;
+                uint8_t c = atariRam[addr];
+                if (c & 0x80) c = 'X';
+                else if (c < 64) c += 32;
                 else if (c < 96) c -= 64;
                 printf("%c", c);
             }

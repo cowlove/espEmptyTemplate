@@ -38,16 +38,17 @@ jmp PBI_INIT                        // D819-D81B Jump vector for device initiali
 .byt $0
 .byt $0                             // Pad out to $D820
 
+ESP32_IOCB
 ESP32_IOCB_REQ                      // Private IOCB structure for passing info to ESP32
     .byt $0     ;  request - 6502 sets to 1 after filling out ESP32_IOCB struct, esp32 clears after handling
+ESP32_IOCB_CMD
+    .byt $ee      
 ESP32_IOCB_A
     .byt $ee     ;  A - iocb index * $20 
 ESP32_IOCB_X
     .byt $ee     ;  X -  
 ESP32_IOCB_Y
     .byt $ee     ;  Y -  
-ESP32_IOCB_CMD
-    .byt $ee     ;  CMD 
 ESP32_IOCB_CARRY
     .byt $ee
 ESP32_IOCB_CRITIC
@@ -61,15 +62,52 @@ ESP32_IOCB_RTCLOK1
 ESP32_IOCB_RTCLOK2
     .byt $ee
 ESP32_IOCB_RTCLOK3
-    .byt $ee
+    .byt $de
 ESP32_IOCB_LOC004D
-    .byt $ee
+    .byt $ad
 ESP32_IOCB_LOC004E
-    .byt $ee
+    .byt $be
 ESP32_IOCB_LOC004F
-    .byt $ee
+    .byt $ef
 ESP32_IOCB_CHECKADDR                     // check byte to confirm code is compiled at the right location
     .byt * / $100 
+
+// todo - figure out how to reserve this much space for a second IOCB without
+// replicating it all here
+IESP32_IOCB
+IESP32_IOCB_REQ                      // Private IOCB structure for passing info to ESP32
+    .byt $0     ;  request - 6502 sets to 1 after filling out ESP32_IOCB struct, esp32 clears after handling
+IESP32_IOCB_CMD
+    .byt $ee      
+IESP32_IOCB_A
+    .byt $ee     ;  A -  
+IESP32_IOCB_X
+    .byt $ee     ;  X -  
+IESP32_IOCB_Y
+    .byt $ee     ;  Y -  
+IESP32_IOCB_CARRY
+    .byt $ee
+IESP32_IOCB_CRITIC
+    .byt $ee
+IESP32_IOCB_6502PSP
+    .byt $ee
+IESP32_IOCB_NMIEN
+    .byt $ee
+IESP32_IOCB_RTCLOK1
+    .byt $ee
+IESP32_IOCB_RTCLOK2
+    .byt $ee
+IESP32_IOCB_RTCLOK3
+    .byt $de
+IESP32_IOCB_LOC004D
+    .byt $ad
+IESP32_IOCB_LOC004E
+    .byt $be
+IESP32_IOCB_LOC004F
+    .byt $ef
+IESP32_IOCB_CHECKADDR                     // check byte to confirm code is compiled at the right location
+    .byt * / $100 
+
 
 TEST_ENTRY
     PLA
@@ -83,7 +121,8 @@ PBI_INIT
     ora #PDEVNUM
     sta PDVMSK  
     lda PDIMSK  // enable this device's bit in PDIMSK
-    ora #PDEVNUM 
+    // XXX disable interrupts until working
+    // ora #PDEVNUM 
     sta PDIMSK
 
  ;Put device name in Handler table HATABS
@@ -128,11 +167,28 @@ L1
 
 PBI_IO
     sta ESP32_IOCB_A
+    stx ESP32_IOCB_X
+    sty ESP32_IOCB_Y
+    ldy #0 
     lda #7
     jmp PBI_ALL
 
 PBI_ISR     
-    sta ESP32_IOCB_A
+    // TODO: a PBI interrupt could interrupt another pbi command in process 
+    // need to use a separate ESP32_IOCB reserved just for the interrupt 
+    // could make PBI_ALL take x as an offset index to select which IOCB 
+    // to use 
+    
+    // XXX working on figuring out the ISR.  This is being called even when the interrupt line
+    // is held high.  If we just return with SEC, system hangs after the dos splash screen.
+    // If we return with clc, it hangs earlier with just 2 io requests.
+    //sec
+    //rts
+
+    sta IESP32_IOCB_A
+    stx IESP32_IOCB_X
+    sty IESP32_IOCB_Y
+    ldy #IESP32_IOCB - ESP32_IOCB 
     lda #8
     jmp PBI_ALL
 
@@ -142,53 +198,80 @@ PBI_ISR
 PBI_OPEN
 // check IOCBCHIDZ see if this is for us
     sta ESP32_IOCB_A
-    lda #1 
-    JMP PBI_ALL
-PBI_CLOSE
-    sta ESP32_IOCB_A
-    lda #2 // cmd close
-    JMP PBI_ALL
-PBI_GETB
-    sta ESP32_IOCB_A
-    lda #3 // cmd close
-    JMP PBI_ALL
-PBI_PUTB
-    sta ESP32_IOCB_A
-    lda #4 // cmd close
-    JMP PBI_ALL
-PBI_STATUS
-    sta ESP32_IOCB_A
-    lda #5 // cmd close
-    JMP PBI_ALL
-PBI_SPECIAL
-    sta ESP32_IOCB_A
-    lda #6 // cmd close
-PBI_ALL
-    // cmd placed in A by entry stubs above 
-    // TODO: need to make sure this request is for this device by checking 
-    // for this device's bit to be set in NDEVREQ
-    //      sta ESP32_IOCB_CMD
-    //      lda NDEVREQ
-    //      ora #PDEVNUM
-    //      bne CONTINUE
-    //      clc // not us, return 
-    //      rts
-    // CONTINUE 
-    sta ESP32_IOCB_CMD
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y
-    lda CRITIC
-    sta ESP32_IOCB_CRITIC
+    ldy #0 
+    lda #1 
+    JMP PBI_ALL
 
-    jsr SAFE_WAIT
+PBI_CLOSE
+    sta ESP32_IOCB_A
+    stx ESP32_IOCB_X
+    sty ESP32_IOCB_Y
+    ldy #0 
+    lda #2 // cmd close
+    JMP PBI_ALL
+
+PBI_GETB
+    sta ESP32_IOCB_A
+    stx ESP32_IOCB_X
+    sty ESP32_IOCB_Y
+    ldy #0 
+    lda #3 // cmd close
+    JMP PBI_ALL
+
+PBI_PUTB
+    sta ESP32_IOCB_A
+    stx ESP32_IOCB_X
+    sty ESP32_IOCB_Y
+    ldy #0 
+    lda #4 // cmd close
+    JMP PBI_ALL
+
+PBI_STATUS
+    sta ESP32_IOCB_A
+    stx ESP32_IOCB_X
+    sty ESP32_IOCB_Y
+    ldy #0 
+    lda #5 // cmd close
+    JMP PBI_ALL
+
+PBI_SPECIAL
+    sta ESP32_IOCB_A
+    stx ESP32_IOCB_X
+    sty ESP32_IOCB_Y
+    ldy #0 
+    lda #6 // cmd close
+
+
+PBI_ALL
+    // A contains the command selected by entry stubs above 
+    // Y contains the IOCB offset, selecting either normal IOCB or the interrupt IOCB 
+    // TODO: need to make sure this request is for this device by checking 
+    // for this device's bit to be set in NDEVREQ
+
+    sta ESP32_IOCB_CMD,y
+    lda NDEVREQ
+    ora #PDEVNUM
+    bne CONTINUE
+    clc // not us, return 
+    jmp RESTORE_REGS_AND_RETURN  
+
+    rts
+
+CONTINUE 
+    lda CRITIC
+    sta ESP32_IOCB_CRITIC,y
+
+    jsr SAFE_WAIT 
 
     // save and then mask interrupts
     php 
     plp 
-    sta ESP32_IOCB_6502PSP
+    sta ESP32_IOCB_6502PSP,y
 
     lda #$40 // TODO find the NMIEN shadow register and restore proper value
-    sta ESP32_IOCB_NMIEN
+    sta ESP32_IOCB_NMIEN,y
 
     sei 
     lda #$00
@@ -198,36 +281,41 @@ PBI_ALL
     // remap call to restore normal esp32 RAM
     // The remap call leaves the results portion of the ESP32_IOCB unchanged 
     lda RTCLOK
-    sta ESP32_IOCB_RTCLOK1
+    sta ESP32_IOCB_RTCLOK1,y
     lda RTCLOK + 1
-    sta ESP32_IOCB_RTCLOK1 + 1
+    sta ESP32_IOCB_RTCLOK1 + 1,y
     lda RTCLOK + 2
-    sta ESP32_IOCB_RTCLOK1 + 2
+    sta ESP32_IOCB_RTCLOK1 + 2,y
     lda $4d
-    sta ESP32_IOCB_LOC004D
+    sta ESP32_IOCB_LOC004D,y
     lda $4e
-    sta ESP32_IOCB_LOC004E
+    sta ESP32_IOCB_LOC004E,y
     lda $4f
-    sta ESP32_IOCB_LOC004F
+    sta ESP32_IOCB_LOC004F,y
 
     lda #9 // remap command
-    STA ESP32_IOCB_CMD
-    lda #1 // TODO: this seems unneeded
+    STA ESP32_IOCB_CMD,y
+
     jsr SAFE_WAIT
 
-    lda ESP32_IOCB_NMIEN
+    lda ESP32_IOCB_NMIEN,y
     sta NMIEN
-    lda ESP32_IOCB_6502PSP
+    lda ESP32_IOCB_6502PSP,y
     and #$02
     bne NO_CLI
     cli
 NO_CLI
 
-    lda ESP32_IOCB_CARRY
-    ror  
-    lda ESP32_IOCB_A
-    ldx ESP32_IOCB_X
-    ldy ESP32_IOCB_Y
+    lda ESP32_IOCB_CARRY,y
+    ror
+
+RESTORE_REGS_AND_RETURN  
+    lda ESP32_IOCB_A,y
+    pha
+    ldx ESP32_IOCB_X,y
+    lda ESP32_IOCB_Y,y
+    tay 
+    pla 
     rts 
 
 //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -255,6 +343,8 @@ COPY_END
 ;; Busy wait in RAM while the PBI ROM is mapped out
 ;; To avoid having to find free ram to do this, put the small 6-byte
 ;; program on the stack and call it
+;;
+;; Y contains the offset into PCB_IOCB structure were setting and then waiting on
 
 SAFE_WAIT
     // push mini-program on stack in reverse order
@@ -290,12 +380,9 @@ return_from_stackprog
     rts        
 
 stack_res_wait
-    sta ESP32_IOCB_REQ      // called with req value in A
-    //sta $0600  // ESP32_IOCB_REQ      // called with req value in A
+    sta ESP32_IOCB,y      // called with req value in A
 stack_res_loop
-    //lda $0600  // ESP32_IOCB_REQ
-    //sta ESP32_IOCB_UNUSED
-    lda ESP32_IOCB_REQ
+    lda ESP32_IOCB,y
     bne stack_res_loop
     rts
 stack_res_wait_end

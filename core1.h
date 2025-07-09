@@ -52,7 +52,7 @@ void IRAM_ATTR iloop_pbi();
 
 //XOPTS    
 //#define BUS_MONITOR
-//#define BUS_DETACH 
+#define BUS_DETACH 
 //#define FAKE_CLOCK
 
 static const struct {
@@ -61,7 +61,7 @@ static const struct {
    float histRunSec   = TEST_SEC;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = -60;
+   float histRunSec   = 600;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
