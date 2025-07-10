@@ -16,8 +16,7 @@ ERRCOUNT
 .byt $00
 
 
-pla
-
+    pla
     lda #$de
     sta MAGIC1
     lda #$ad
@@ -38,56 +37,63 @@ WAIT4
 LOOP1
     ldx #0
     lda #0
-LOOP2
-    sta TESTAREA,x
-    sta TESTAREA+$100,x
-    sta TESTAREA+$200,x
-    sta TESTAREA+$300,x
-    sta TESTAREA,x
-    sta TESTAREA+$100,x
-    sta TESTAREA+$200,x
-    sta TESTAREA+$300,x
-    clc
-    adc #1
-    inx
-    bne LOOP2
 
-    ldx #0
-    lda #0
-LOOP3
-    cmp TESTAREA,x
-    bne ERR1
-    cmp TESTAREA+$100,x
-    bne ERR1
-    cmp TESTAREA+$200,x
-    bne ERR1
-    cmp TESTAREA+$300,x
-    bne ERR1
-    cmp TESTAREA+$400,x
-    bne ERR1
-    cmp TESTAREA+$500,x
-    bne ERR1
-    cmp TESTAREA+$600,x
-    bne ERR1
-    cmp TESTAREA+$700,x
-    beq OK1
-ERR1
-    jsr LOG_ERROR1
-OK1    
-    clc
-    adc #1
-    inx
-    bne LOOP3
+    // x and y wrapped around to 0 on branches to here 
+    LOOP2
+        sta TESTAREA,x
+        sta TESTAREA+$100,x
+        sta TESTAREA+$200,x
+        sta TESTAREA+$300,x
+        sta TESTAREA,x
+        sta TESTAREA+$100,x
+        sta TESTAREA+$200,x
+        sta TESTAREA+$300,x
+        clc
+        adc #1
+        inx
+        bne LOOP2
 
-    iny
-    bne LOOP1
+    LOOP3
+        cmp TESTAREA,x
+        bne ERR1
+        cmp TESTAREA+$100,x
+        bne ERR1
+        cmp TESTAREA+$200,x
+        bne ERR1
+        cmp TESTAREA+$300,x
+        bne ERR1
+        cmp TESTAREA+$400,x
+        bne ERR1
+        cmp TESTAREA+$500,x
+        bne ERR1
+        cmp TESTAREA+$600,x
+        bne ERR1
+        cmp TESTAREA+$700,x
+        beq OK1
+    ERR1
+        jsr LOG_ERROR1
+    OK1    
+        clc
+        adc #1
+        inx
+        bne LOOP3
 
-    inc SCREENMEM
-    lda #1
+    pha
+    lda #3
     sta CMD
 
-    jmp LOOP1
+    WAIT5
+        lda CMD
+        bne WAIT5   
+    pla
+    iny
+    bne LOOP2
 
+    clc
+    adc #1
+    sta SCREENMEM
+    jmp LOOP2
+    
 LOG_ERROR1
     pha
     lda SCREENMEM+2

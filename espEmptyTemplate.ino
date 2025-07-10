@@ -604,7 +604,10 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     busMon.enable = true;
     structLogs.pbi.add(*pbiRequest);
     while(busMon.available()) { busMon.get(); }                
+#ifndef RAM_TEST
     diskReadCount++;
+#endif
+
 #ifdef BUS_DETACH
     // Disable PBI memory device 
     disableBus();
@@ -792,6 +795,9 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     //atariRam[0x0600] = 0;
 
 }
+
+DRAM_ATTR static uint8_t dummyMem[0x400];
+
 void IRAM_ATTR core0Loop() { 
     int elapsedSec = 0;
     int pi = 0;
@@ -820,12 +826,12 @@ void IRAM_ATTR core0Loop() {
 
     enableBus();
 
+#ifdef RAM_TEST
+    // disable PBI ROM by corrupting it 
+    pbiROM[0x03] = 0xff;
+#endif
+
     while(1) {
-
-        // disable PBI ROM by corrupting it 
-        pbiROM[0x03] = 0xff;
-
-
         uint32_t stsc = XTHAL_GET_CCOUNT();
         if (0) {
             static const int tbSize = 128;
@@ -846,21 +852,42 @@ void IRAM_ATTR core0Loop() {
             }
             break;
         }
-        if (1) { // slow loop down to 1ms
+        if (1) { // slow loop down to 10ms
             stsc = XTHAL_GET_CCOUNT();
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 100) {}
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50) { 
+                uint32_t lastWrite = (REG_READ(SYSTEM_CORE_1_CONTROL_1_REG) & addrMask) >> addrShift;
+#ifdef MEM_TEST
+                if (lastWrite == 0x0600) break;
+#endif 
+                if (lastWrite == 0xd800) break;
+                if (lastWrite == 0xd820) break;
+                __asm__ __volatile__ ("nop");
+                __asm__ __volatile__ ("nop");
+                __asm__ __volatile__ ("nop");
+            }
         }
 
         if (1) { // XXMEMTEST
+            //for(int i = 0; i < sizeof(dummyMem); i++) {
+            //    dummyMem[i] = atariRam[0x8000 + i];
+            //}
             if (atariRam[1536] != 0 &&
                 atariRam[1537] == 0xde && 
                 atariRam[1538] == 0xad &&
                 atariRam[1539] == 0xbe &&
                 atariRam[1540] == 0xef) {
-                    for(int mem = 0x8400; mem < 0x8900; mem += 0x100) { 
-                        for(int i = 0; i < 256; i++) {
-                            //if (atariRam[mem + i] != i) memWriteErrors++;
-                            atariRam[mem + i] = i ;
+                    int cmd = atariRam[1536];
+                    if (cmd == 1) { 
+                        // remap 
+                        for(int mem = 0x8000; mem < 0x8400; mem += 0x100) { 
+                            banks[nrBanks + ((mem + 0x400) >> bankShift)] = &atariRam[mem];
+                        }
+                    }
+                    if (0 && cmd == 2) {  
+                        for(int mem = 0x8000; mem < 0x8400; mem += 0x100) { 
+                            for(int i = 0; i < 256; i++) {
+                                if (atariRam[mem + i] != i) memWriteErrors++;
+                            }
                         }
                     }
                     atariRam[1536] = 0;
@@ -872,7 +899,7 @@ void IRAM_ATTR core0Loop() {
             psram[pi++] = busMon.get(); 
             }
         }
-        if (1) { 
+        if (0) { 
             while(busMon.available()) { 
                 uint32_t v = busMon.get();
                 if (busMon.enable && (v & busMon.matchMask) == busMon.matchValue) {
@@ -890,7 +917,7 @@ void IRAM_ATTR core0Loop() {
 
 //#ifdef FAKE_CLOCK
 #if 1
-        if (1 && elapsedSec > 10) { //XXFAKEIO
+        if (0 && elapsedSec > 10) { //XXFAKEIO
             // Stuff some fake PBI commands to exercise code in the core0 loop during timing tests 
             static uint32_t lastTsc;
             if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 2) {
@@ -943,7 +970,7 @@ void IRAM_ATTR core0Loop() {
         }
 
 #ifdef SIM_KEYPRESS
-        if (1) { 
+        if (elapsedSec < 10) { 
             static uint32_t lastTsc;
             static const int keyMs = 150;
             if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * keyMs) {
@@ -1028,8 +1055,8 @@ void IRAM_ATTR core0Loop() {
 
             #ifndef FAKE_CLOCK
             if (1) { 
-                static int lastReads = 0;
-                static int secondsWithoutRead = 0;
+                DRAM_ATTR static int lastReads = 0;
+                DRAM_ATTR static int secondsWithoutRead = 0;
                 if (diskReadCount == lastReads) { 
                     secondsWithoutRead++;
                 } else { 
@@ -1288,10 +1315,13 @@ void threadFunc(void *) {
             for(int col = 0; col < 40; col++) { 
                 uint16_t addr = savmsc + row * 40 + col;
                 uint8_t c = atariRam[addr];
-                if (c & 0x80) c = 'X';
-                else if (c < 64) c += 32;
+                if (c & 0x80) {
+                    printf("\033[7m");
+                    c -= 0x80;
+                };
+                if (c < 64) c += 32;
                 else if (c < 96) c -= 64;
-                printf("%c", c);
+                printf("%c\033[0m", c);
             }
             printf("|\n");
         }
@@ -1314,8 +1344,8 @@ void threadFunc(void *) {
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
     int memReadErrors = (atariRam[0x608] << 24) + (atariRam[0x607] << 16) + (atariRam[0x606] << 16) + atariRam[0x605];
-    printf("DONE %10.2f READERR %8d WRITERR %8d BUILT " __TIME__ " Exit reason: %s\n", 
-        millis() / 1000.0, memReadErrors, memWriteErrors, exitReason.c_str());
+    printf("DONE %10.2f READERR %8d IO %8d BUILT " __TIME__ " Exit reason: %s\n", 
+        millis() / 1000.0, memReadErrors, diskReadCount, exitReason.c_str());
     delay(100);
     
     //ESP.restart();

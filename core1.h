@@ -54,6 +54,7 @@ void IRAM_ATTR iloop_pbi();
 //#define BUS_MONITOR
 //#define BUS_DETACH 
 //#define FAKE_CLOCK
+#define RAM_TEST
 
 static const struct {
 #ifdef FAKE_CLOCK
@@ -61,7 +62,7 @@ static const struct {
    float histRunSec   = TEST_SEC;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 900;
+   float histRunSec   = 1200;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
