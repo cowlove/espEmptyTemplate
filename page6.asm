@@ -38,12 +38,8 @@ LOOP1
     ldx #0
     lda #0
 
-    // x and y wrapped around to 0 on branches to here 
-    LOOP2
-        sta TESTAREA,x
-        sta TESTAREA+$100,x
-        sta TESTAREA+$200,x
-        sta TESTAREA+$300,x
+    // x, y, a: wrapped around to starting point on branches to here 
+    LOOP2 // loop2: write incrementing pattern 
         sta TESTAREA,x
         sta TESTAREA+$100,x
         sta TESTAREA+$200,x
@@ -53,15 +49,8 @@ LOOP1
         inx
         bne LOOP2
 
-    LOOP3
-        cmp TESTAREA,x
-        bne ERR1
-        cmp TESTAREA+$100,x
-        bne ERR1
-        cmp TESTAREA+$200,x
-        bne ERR1
-        cmp TESTAREA+$300,x
-        bne ERR1
+    // x, a: wrapped back to starting point for next loop
+    LOOP3 // compare pattern, should appear in remapped pages 
         cmp TESTAREA+$400,x
         bne ERR1
         cmp TESTAREA+$500,x
@@ -78,10 +67,9 @@ LOOP1
         inx
         bne LOOP3
 
-    pha
+    pha // write page 6 command byte and wait for response 
     lda #3
     sta CMD
-
     WAIT5
         lda CMD
         bne WAIT5   
@@ -96,24 +84,11 @@ LOOP1
     
 LOG_ERROR1
     pha
-    lda SCREENMEM+2
-    clc
-    adc #1
-    sta SCREENMEM+2
-    jmp LOG_ERROR
 
-LOG_ERROR2
-    pha
-    lda SCREENMEM+4
-    clc
-    adc #1
-    sta SCREENMEM+4
-    txa 
-    sta SCREENMEM+5
+    // wiggle the screen error indicator 
+    inc SCREENMEM+2
 
-    //jmp LOG_ERROR
-
-LOG_ERROR
+    // increment 24-bit ERRCOUNT value
     sec
     lda #0
     adc ERRCOUNT
