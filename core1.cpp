@@ -73,6 +73,8 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
 
         uint32_t setMask = (mpdSelect << mpdShift) | busMask;
 
+        __asm__ __volatile__ ("nop");
+        __asm__ __volatile__ ("nop");
         // Timing critical point #0: ~10 ticks before the disabling the data lines 
         //PROFILE1(XTHAL_GET_CCOUNT() - tscFall); 
         REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask | extSel_Mask);
@@ -87,7 +89,6 @@ void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
         __asm__ __volatile__ ("nop");
         __asm__ __volatile__ ("nop");
         __asm__ __volatile__ ("nop");
-
         // Timing critical point #0: >= 30 ticks before reading the address/control lines
         uint32_t r0 = REG_READ(GPIO_IN_REG);
         PROFILE1(XTHAL_GET_CCOUNT() - tscFall); 

@@ -77,11 +77,15 @@ DRAM_ATTR RAM_VOLATILE uint8_t atariRomWrites[64 * 1024] = {0x0};
 DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024] = {
 #include "pbirom.h"
 };
+DRAM_ATTR RAM_VOLATILE uint8_t page6Prog[] = {
+#include "page6.h"
+};
 DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
 
-BUSCTL_VOLATILE uint32_t busMask = extSel_Mask | interruptMask;
+
+BUSCTL_VOLATILE DRAM_ATTR uint32_t busMask = extSel_Mask | interruptMask;
 
 IRAM_ATTR void enableBus() { 
     for(int i = 0; i < nrBanks; i++) { 
@@ -198,8 +202,8 @@ static const int dma_bufs = 2; // must be power of 2
 static const int dram_sz = dma_sz * dma_bufs;
 
 uint32_t *dram;
-static const int testFreq = 1.8 * 1000000;//1000000;
-static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
+DRAM_ATTR static const int testFreq = 1.8 * 1000000;//1000000;
+DRAM_ATTR static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
 uint32_t dramElapsedTsc;
 uint32_t lateTsc;
@@ -209,34 +213,34 @@ int psramLoopCount = 0;
 int lateCount = 0;
 int lateMax = 0, lateMin = 9999, lateIndex = -1;
 int cbCount = 0;
-int stop = false;
+DRAM_ATTR int stop = false;
 dedic_gpio_bundle_handle_t bundleIn, bundleOut;
 uint32_t lastAddr = -1;
-volatile int cumulativeResets = 0;
-volatile int currentResetValue = 1;
+DRAM_ATTR volatile int cumulativeResets = 0;
+DRAM_ATTR volatile int currentResetValue = 1;
 
 DRAM_ATTR volatile int core1Reg = 0;
 
-volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
-int maxElapsed1 = 0, maxElapsed2 = 0;
-int maxElapsedIndex1 = 0;
+DRAM_ATTR volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
+DRAM_ATTR int maxElapsed1 = 0, maxElapsed2 = 0;
+DRAM_ATTR int maxElapsedIndex1 = 0;
 void iloop_timings1();
 void iloop_timings2();
 
 
-int maxLoopElapsed, minLoopElapsed, loopElapsedLate = 0;
+DRAM_ATTR int maxLoopElapsed, minLoopElapsed, loopElapsedLate = 0;
 
-static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*, void*) {
+DRAM_ATTR static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*, void*) {
     cbCount++;  
     return false;
 }
 
-void busyWaitCCount(uint32_t cycles) { 
+inline IRAM_ATTR void busyWaitCCount(uint32_t cycles) { 
     uint32_t tsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
 }
 
-inline void busywait(float sec) {
+inline IRAM_ATTR void busywait(float sec) {
     uint32_t tsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - tsc < sec * 240 * 1000000) {};
 }
@@ -371,7 +375,7 @@ struct AtariIOCB {
             ICAX6;
     };
 
-const struct AtariDefStruct {
+DRAM_ATTR const struct AtariDefStruct {
     int IOCB0 = 0x340;
     int ZIOCB = 0x20;
     int NUMIOCB = 0x8;
@@ -383,9 +387,9 @@ const struct AtariDefStruct {
 } AtariDef;
 
 DRAM_ATTR Hist2 profilers[numProfilers];
-int ramReads = 0, ramWrites = 0;
+DRAM_ATTR int ramReads = 0, ramWrites = 0;
 
-const char *defaultProgram = 
+DRAM_ATTR const char *defaultProgram = 
         "10 OPEN #1,4,0,\"J2:\" \233"
         "20 GET #1,A  \233"
         "30 PRINT \"   \"; \233"
@@ -409,11 +413,15 @@ const char *defaultProgram =
         ;
 ;
 
-vector<uint8_t> simulatedKeypressQueue;
-void addSimKeypress(const string &s) { 
-    for(auto a : s) simulatedKeypressQueue.push_back(a);
+DRAM_ATTR vector<uint8_t> simulatedKeypressQueue;
+DRAM_ATTR int simulatedKeysAvailable = 0;
+IRAM_ATTR void addSimKeypress(const char c) {
+    simulatedKeypressQueue.push_back(c);
+    simulatedKeysAvailable = 1;
 }
-int simulatedKeysAvailable = 0;
+IRAM_ATTR void addSimKeypress(const string &s) { 
+    for(auto a : s) addSimKeypress(a);
+}
 
 // CORE0 loop options 
 #ifndef FAKE_CLOCK
@@ -432,7 +440,7 @@ struct AtariIO {
 #ifdef SIM_KEYPRESS_FILE
 
     string filename;
-    void open(const string &f) { 
+    inline IRAM_ATTR void open(const string &f) { 
         filename = f;
         if (filename == "J:UNMAP") {
             bankEnable[(0x8000>>bankShift)] = mpdMask;
@@ -446,25 +454,26 @@ struct AtariIO {
             busMask = busMask & (~interruptMask);
         }
 #else 
-    void open() { 
+    inline IRAM_ATTR void open() { 
 #endif
         ptr = 0; 
     }
 
-    int get() { 
+    inline IRAM_ATTR int get() { 
         if (ptr >= len) return -1;
         return buf[ptr++];
     }
-    int put(uint8_t c) { 
+    inline IRAM_ATTR int put(uint8_t c) { 
         if (ptr >= sizeof(buf)) return -1;
         buf[ptr++] = c;
         len = ptr;
 #ifdef SIM_KEYPRESS_FILE
-        if (filename == "J:KEYS") simulatedKeypressQueue.push_back(c);
+        if (filename == "J:KEYS") addSimKeypress(c);
 #endif
         return 1;
     }
-} fakeFile; 
+};
+DRAM_ATTR AtariIO fakeFile; 
 
 struct AtariDCB { 
    uint8_t 
@@ -482,7 +491,7 @@ struct AtariDCB {
     DAUX2;
 };
 
-struct { 
+DRAM_ATTR struct { 
     AtariDCB *dcb = (AtariDCB *)&atariRam[0x300];
     AtariIOCB *ziocb = (AtariIOCB *)&atariRam[0x20];
     AtariIOCB *iocb0 = (AtariIOCB *)&atariRam[0x320];
@@ -510,25 +519,38 @@ struct PbiIocb {
     uint8_t romAddrSignatureCheck;
 };
 
+#ifdef STRUCT_LOG 
 template<class T> 
 struct StructLog { 
     int maxSize;
     StructLog(int maxS = 32) : maxSize(maxS) {}
     vector<T> log;
-    void add(const T &t) { 
+    inline void IRAM_ATTR add(const T &t) { 
         log.push_back(t);
         if (log.size() > maxSize) log.erase(log.begin());
     }
-    static void printEntry(const T&);
-    void print() { for(auto a : log) printEntry(a); }
+    static inline IRAM_ATTR void  printEntry(const T&);
+    inline void IRAM_ATTR print() { for(auto a : log) printEntry(a); }
 };
-template <class T> void StructLog<T>::printEntry(const T &a) {
+template <class T> inline IRAM_ATTR void StructLog<T>::printEntry(const T &a) {
     for(int i = 0; i < sizeof(a); i++) printf("%02x ", ((uint8_t *)&a)[i]);
     printf("\n");
 }
-template <> void StructLog<string>::printEntry(const string &a) { printf("%s\n", a.c_str()); }
 
-struct { 
+template <> inline void StructLog<string>::printEntry(const string &a) { 
+    printf("%s\n", a.c_str()); 
+}
+#else //#ifdef STRUCT_LOG 
+template<class T> 
+struct StructLog {
+    inline void IRAM_ATTR add(const T &t) {} 
+    static inline IRAM_ATTR void  printEntry(const T&) {}
+    inline void IRAM_ATTR print() {}
+};
+#endif
+
+
+DRAM_ATTR struct { 
     StructLog<AtariDCB> dcb; 
     StructLog<AtariIOCB> iocb; 
     StructLog<PbiIocb> pbi; 
@@ -563,17 +585,17 @@ struct DiskImage {
         AtrImageHeader header;
     } *image;
 };
-DiskImage atariDisks[8] = {
+
+DRAM_ATTR DiskImage atariDisks[8] =  {
     {"none", (DiskImage::DiskImageRawData *)diskImg}, 
     {"none", (DiskImage::DiskImageRawData *)diskImg}, 
 };
 
 
-
-int maxBufsUsed = 0;
-async_memcpy_handle_t handle = NULL;
-int diskReadCount = 0, pbiInterruptCount = 0;
-string exitReason = "";
+DRAM_ATTR int maxBufsUsed = 0;
+DRAM_ATTR async_memcpy_handle_t handle = NULL;
+DRAM_ATTR int diskReadCount = 0, pbiInterruptCount = 0, memWriteErrors = 0;
+DRAM_ATTR string exitReason = "";
 
 // Apparently can't make any function calls from the core0 loops, even inline.  Otherwise it breaks 
 // timing on the core1 loop
@@ -799,6 +821,11 @@ void IRAM_ATTR core0Loop() {
     enableBus();
 
     while(1) {
+
+        // disable PBI ROM by corrupting it 
+        pbiROM[0x03] = 0xff;
+
+
         uint32_t stsc = XTHAL_GET_CCOUNT();
         if (0) {
             static const int tbSize = 128;
@@ -821,7 +848,24 @@ void IRAM_ATTR core0Loop() {
         }
         if (1) { // slow loop down to 1ms
             stsc = XTHAL_GET_CCOUNT();
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 2000) {}
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 100) {}
+        }
+
+        if (1) { // XXMEMTEST
+            if (atariRam[1536] != 0 &&
+                atariRam[1537] == 0xde && 
+                atariRam[1538] == 0xad &&
+                atariRam[1539] == 0xbe &&
+                atariRam[1540] == 0xef) {
+                    for(int mem = 0x8400; mem < 0x8900; mem += 0x100) { 
+                        for(int i = 0; i < 256; i++) {
+                            //if (atariRam[mem + i] != i) memWriteErrors++;
+                            atariRam[mem + i] = i ;
+                        }
+                    }
+                    atariRam[1536] = 0;
+                    diskReadCount++; 
+            }
         }
         if (0) { 
             while(busMon.available() && pi < psram_sz / sizeof(psram[0])) { 
@@ -844,15 +888,16 @@ void IRAM_ATTR core0Loop() {
             #endif
         }
 
-#ifdef FAKE_CLOCK
-        if (0) { 
+//#ifdef FAKE_CLOCK
+#if 1
+        if (1 && elapsedSec > 10) { //XXFAKEIO
             // Stuff some fake PBI commands to exercise code in the core0 loop during timing tests 
             static uint32_t lastTsc;
-            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 20) {
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 2) {
                 lastTsc = XTHAL_GET_CCOUNT();
                 volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
                 static int step = 0;
-                if (step == 1) { 
+                if (0 && step == 1) { 
                     // stuff a fake CIO put request
                     #ifdef SIM_KEYPRESS_FILE
                     fakeFile.filename = "J:KEYS";
@@ -866,7 +911,7 @@ void IRAM_ATTR core0Loop() {
                     dcb->DBUFHI = 0x40;
                     dcb->DBUFLO = 0x00;
                     dcb->DDEVIC = 0x31; 
-                    dcb->DUNIT = 2;
+                    dcb->DUNIT = 1;
                     dcb->DAUX1++; 
                     dcb->DAUX2 = 0;
                     dcb->DCOMND = 0x52;
@@ -900,13 +945,16 @@ void IRAM_ATTR core0Loop() {
 #ifdef SIM_KEYPRESS
         if (1) { 
             static uint32_t lastTsc;
-            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 200) {
+            static const int keyMs = 150;
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * keyMs) {
                 lastTsc = XTHAL_GET_CCOUNT();
-                if (simulatedKeypressQueue.size() > 0) { 
+                if (simulatedKeysAvailable && simulatedKeypressQueue.size() > 0) { 
                     uint8_t c = simulatedKeypressQueue[0];
                     simulatedKeypressQueue.erase(simulatedKeypressQueue.begin());
                     if (c != 255) 
                         atariRam[764] = ascii2keypress[c];
+                } else { 
+                    simulatedKeysAvailable = 0;
                 }
             }
         }
@@ -964,19 +1012,21 @@ void IRAM_ATTR core0Loop() {
             if (*drLoopCount - psramLoopCount > maxBufsUsed) maxBufsUsed = *drLoopCount - psramLoopCount;
         }
 #endif 
-        if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { 
+        if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { // XXSECOND
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
-            
-            //busMask &= ~interruptMask;
-#ifndef FAKE_CLOCK
-            if (elapsedSec == 15) { 
+                
+            if (elapsedSec == 8 && diskReadCount == 0) {
+                memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
+                addSimKeypress("A=USR(1545)\233");
+            }
+
+            if (elapsedSec == 15 && diskReadCount > 0) {
                 addSimKeypress("    \233E.\"J\233");
-                //for(int i = 0; i < numProfilers; i++) profilers[i].clear();
-                for(int i = 0; i < sizeof(atariRam); i++) { 
-                    psram[i] = 0;
-                }
-            } 
+            }
+            //busMask &= ~interruptMask;
+
+            #ifndef FAKE_CLOCK
             if (1) { 
                 static int lastReads = 0;
                 static int secondsWithoutRead = 0;
@@ -996,7 +1046,7 @@ void IRAM_ATTR core0Loop() {
                     break;
                 }
             }
-#endif
+            #endif
 
             if (elapsedSec == 1) { 
                for(int i = 0; i < numProfilers; i++) profilers[i].clear();
@@ -1263,7 +1313,9 @@ void threadFunc(void *) {
     
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
-    printf("DONE %10.2f GIT: " GIT_VERSION " " __TIME__ " Exit reason: %s\n", millis() / 1000.0, exitReason.c_str());
+    int memReadErrors = (atariRam[0x608] << 24) + (atariRam[0x607] << 16) + (atariRam[0x606] << 16) + atariRam[0x605];
+    printf("DONE %10.2f READERR %8d WRITERR %8d BUILT " __TIME__ " Exit reason: %s\n", 
+        millis() / 1000.0, memReadErrors, memWriteErrors, exitReason.c_str());
     delay(100);
     
     //ESP.restart();

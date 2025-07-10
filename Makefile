@@ -71,3 +71,8 @@ pbirom.h:  pbirom.o65
 pbirom.o65:  pbirom.asm
 	xa -C pbirom.asm -o pbirom.o65
 
+page6.h:  page6.o65
+	./bin2src.py page6.o65 > page6.h
+
+page6.o65:  page6.asm
+	xa -C page6.asm -o page6.o65
