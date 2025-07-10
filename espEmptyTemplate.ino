@@ -87,13 +87,19 @@ DRAM_ATTR uint8_t diskImg[] = {
 
 BUSCTL_VOLATILE DRAM_ATTR uint32_t busMask = extSel_Mask | interruptMask;
 
+IRAM_ATTR void memoryMapInit() { 
+    for(int i = 0; i < nrBanks; i++) {
+        banks[i] = &atariRomWrites[64 * 1024 / nrBanks * i];
+        banks[i + nrBanks] = &atariRam[64 * 1024 / nrBanks * i];
+    };
+}
+
 IRAM_ATTR void enableBus() { 
     for(int i = 0; i < nrBanks; i++) { 
         bankEnable[i] = mpdMask | extSel_Mask | interruptMask;
         bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask | interruptMask;
     }
     bankEnable[0xd100 >> bankShift] |= dataMask;
-
     delayTicks(240 * 100);
 }
 
@@ -392,22 +398,23 @@ DRAM_ATTR int ramReads = 0, ramWrites = 0;
 DRAM_ATTR const char *defaultProgram = 
         "10 OPEN #1,4,0,\"J2:\" \233"
         "20 GET #1,A  \233"
-        "30 PRINT \"   \"; \233"
-        "35 PRINT A;  \233"
+      //  "30 PRINT \"   \"; \233"
+      //  "35 PRINT A;  \233"
         "40 CLOSE #1  \233"
         "41 OPEN #1,8,0,\"J\" \233"
         "42 PUT #1,A + 1 \233"
         "43 CLOSE #1 \233"
         "50 A=USR(1536) \233"
-        "51 PRINT \" >>> \"; \233"
+        "51 PRINT \"    >>> \"; \233"
         "52 PRINT COUNT; \233"
         "53 COUNT = COUNT + 1 \233"
-        "54 OPEN #1,4,0,\"D1:X32Z.DOS\" \233"
+        //"54 OPEN #1,4,0,\"D2:DUP.SYS\" \233"
+        "54 OPEN #1,4,0,\"D2:X32Z.DOS\" \233"
         "55 POINT #1,SEC,BYT \233"
         "56 GET #1,A \233"
         "57 CLOSE #1 \233"
         "58 SEC = SEC + 1 \233"
-        "59 IF SEC > 100 THEN SEC = 0 \233"
+        "59 IF SEC > 40 THEN SEC = 0 \233"
         "70 GOTO 10 \233"
         "RUN\233"
         ;
@@ -1050,6 +1057,7 @@ void IRAM_ATTR core0Loop() {
 
             if (elapsedSec == 15 && diskReadCount > 0) {
                 addSimKeypress("    \233E.\"J\233");
+                //addSimKeypress("    \233DOS\233     \233DIR D2:\233");
             }
             //busMask &= ~interruptMask;
 

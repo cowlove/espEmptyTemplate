@@ -176,6 +176,8 @@ extern DRAM_ATTR RAM_VOLATILE uint8_t cartROM[];
 extern DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024];
 
 extern BUSCTL_VOLATILE uint32_t busMask;
+IRAM_ATTR void enableBus();
+IRAM_ATTR void memoryMapInit();
 
 struct Hist2 { 
     static const int maxBucket = 512; // must be power of 2

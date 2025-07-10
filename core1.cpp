@@ -37,19 +37,8 @@
 //static uint8_t dummyWriteBank[bankSize];
 
 void IRAM_ATTR __attribute__((optimize("O1"))) iloop_pbi() {
-    for(int i = 0; i < nrBanks; i++) {
-        banks[i] = &atariRomWrites[64 * 1024 / nrBanks * i];
-        banks[i + nrBanks] = &atariRam[64 * 1024 / nrBanks * i];
-    };
-    for(int i = 0; i < nrBanks; i++) {
-        bankEnable[i] = mpdMask | extSel_Mask; 
-        bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask;
-    };
-
-    //banks[0xd100 >> bankShift] = &atariRam[0xd100];
-    bankEnable[0xd100 >> bankShift] |= dataMask;
-
-    //atariRam[0xd803] = 0x00;
+    memoryMapInit();
+    enableBus();
 
     for(auto i : pins) gpio_ll_input_enable(NULL, i);
     gpio_matrix_in(clockPin,      CORE1_GPIO_IN0_IDX, false);
