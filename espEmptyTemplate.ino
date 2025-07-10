@@ -603,6 +603,7 @@ DRAM_ATTR int maxBufsUsed = 0;
 DRAM_ATTR async_memcpy_handle_t handle = NULL;
 DRAM_ATTR int diskReadCount = 0, pbiInterruptCount = 0, memWriteErrors = 0;
 DRAM_ATTR string exitReason = "";
+DRAM_ATTR int elapsedSec = 0;
 
 // Apparently can't make any function calls from the core0 loops, even inline.  Otherwise it breaks 
 // timing on the core1 loop
@@ -626,6 +627,18 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         fflush(stdout);
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
+    }
+    if (1) { 
+        DRAM_ATTR static int lastPrint = -999;
+        if (elapsedSec - lastPrint >= 2) { 
+            enableCore0WDT();
+            portENABLE_INTERRUPTS();
+            lastPrint = elapsedSec;
+            printf("time %02d:%02d:%02d iocount: %8d\n", elapsedSec/3600, (elapsedSec/60)%60, elapsedSec%60, diskReadCount);
+            fflush(stdout);
+            portDISABLE_INTERRUPTS();
+            disableCore0WDT();
+        }
     }
     if (0) { 
         enableCore0WDT();
@@ -806,7 +819,6 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
 DRAM_ATTR static uint8_t dummyMem[0x400];
 
 void IRAM_ATTR core0Loop() { 
-    int elapsedSec = 0;
     int pi = 0;
     uint32_t lastCycleCount, startTsc = XTHAL_GET_CCOUNT();
     volatile int *drLoopCount = &dramLoopCount;
