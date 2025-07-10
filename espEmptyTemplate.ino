@@ -611,7 +611,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
 #ifdef BUS_DETACH
     // Disable PBI memory device 
     disableBus();
-    if (1) { 
+    if (0) { 
         enableCore0WDT();
         portENABLE_INTERRUPTS();
         // lfs_ may call printf();
@@ -620,7 +620,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
-    if (1) { 
+    if (0) { 
         enableCore0WDT();
         portENABLE_INTERRUPTS();
         printf("IO request: ");
@@ -684,7 +684,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         int sector = (((uint16_t)dcb->DAUX2) << 8) | dcb->DAUX1;
         structLogs.dcb.add(*dcb);
 #ifdef BUS_DETACH
-        if (1) { 
+        if (0) { 
             enableCore0WDT();
             portENABLE_INTERRUPTS();
             printf("DCB: ");
@@ -778,7 +778,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     // maybe just fake them and don't bother with a two-stage completion process  
 
     #ifdef BUS_DETACH
-    for(int n = 0; i < 2048 / bankSize; i++) { 
+    for(int i = 0; i < 2048 / bankSize; i++) { 
         enableSingleBank((0xd800 >> bankShift) + i);
     }
     #endif
@@ -856,7 +856,7 @@ void IRAM_ATTR core0Loop() {
             stsc = XTHAL_GET_CCOUNT();
             while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50) { 
                 uint32_t lastWrite = (REG_READ(SYSTEM_CORE_1_CONTROL_1_REG) & addrMask) >> addrShift;
-#ifdef MEM_TEST
+#ifdef RAM_TEST
                 if (lastWrite == 0x0600) break;
 #endif 
                 if (lastWrite == 0xd800) break;
@@ -970,7 +970,7 @@ void IRAM_ATTR core0Loop() {
         }
 
 #ifdef SIM_KEYPRESS
-        if (elapsedSec < 10) { 
+        if (elapsedSec < 40) { 
             static uint32_t lastTsc;
             static const int keyMs = 150;
             if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * keyMs) {
@@ -1344,6 +1344,9 @@ void threadFunc(void *) {
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
     int memReadErrors = (atariRam[0x608] << 24) + (atariRam[0x607] << 16) + (atariRam[0x606] << 16) + atariRam[0x605];
+#ifndef RAM_TEST
+    memReadErrors = -1;
+#endif
     printf("DONE %10.2f READERR %8d IO %8d BUILT " __TIME__ " Exit reason: %s\n", 
         millis() / 1000.0, memReadErrors, diskReadCount, exitReason.c_str());
     delay(100);
