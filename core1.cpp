@@ -49,8 +49,8 @@ void IRAM_ATTR iloop_pbi() {
 //    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in()) == 0) {}
   
-    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
-    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
+    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask | interruptMask); 
+    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask | interruptMask); 
 
     RAM_VOLATILE uint8_t * const bankD800[2] = { &pbiROM[0], &atariRam[0xd800]};
     uint32_t lastWriteR0 = 0;
@@ -103,7 +103,6 @@ void IRAM_ATTR iloop_pbi() {
 
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
             PROFILE2(XTHAL_GET_CCOUNT() - tscFall); 
-            //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0);
             REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, lastWriteR0);
             banks[(0xd800 >> bankShift) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect];
             banks[((0xd800 >> bankShift) + 1) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect] + bankSize;

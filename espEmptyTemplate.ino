@@ -102,24 +102,39 @@ IRAM_ATTR void memoryMapInit() {
     banks[d100Bank | BANKSEL_ROM | BANKSEL_RD ] = &bankD100Read[0]; 
     banks[d100Bank | BANKSEL_RAM | BANKSEL_WR ] = &bankD100Write[0]; 
     banks[d100Bank | BANKSEL_RAM | BANKSEL_RD ] = &bankD100Read[0]; 
+}
+
+int interruptRequested = 0;
+IRAM_ATTR void raiseInterrupt() { 
     bankD100Read[0xd1ff & bankOffsetMask] = 0x1;
+    busMask &= (~interruptMask);
+    interruptRequested = 1;
+}
+IRAM_ATTR void clearInterrupt() { 
+    bankD100Read[0xd1ff & bankOffsetMask] = 0x0;
+    busMask |= interruptMask;
+    interruptRequested = 0;
 }
 
 IRAM_ATTR void enableBus() { 
     for(int i = 0; i < nrBanks; i++) { 
-        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = mpdMask | extSel_Mask | interruptMask;
-        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = dataMask | mpdMask | extSel_Mask | interruptMask;
+        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = 0;
+        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = dataMask | extSel_Mask;
     }
 
     // enable "ROM" reads and writes to 0xd100-0xd1ff 
     static const int d100Bank = (0xd1ff >> bankShift);
-    bankEnable[d100Bank | BANKSEL_ROM | BANKSEL_RD] |= dataMask;
+    bankEnable[d100Bank | BANKSEL_ROM | BANKSEL_RD] = dataMask | extSel_Mask;
     delayTicks(240 * 100);
 }
 
 IRAM_ATTR void enableSingleBank(int i) {
-    bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = mpdMask | extSel_Mask | interruptMask;
-    bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = dataMask | mpdMask | extSel_Mask | interruptMask;
+    bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = 0;
+    bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = dataMask | extSel_Mask;
+}
+IRAM_ATTR void disableSingleBank(int i) {
+    bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = 0;
+    bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = 0;
 }
 
 IRAM_ATTR void disableBus() {
@@ -464,15 +479,13 @@ struct AtariIO {
     inline IRAM_ATTR void open(const string &f) { 
         filename = f;
         if (filename == "J:UNMAP") {
-            bankEnable[(0x8000>>bankShift)] = mpdMask;
-            bankEnable[(0x8000>>bankShift) + nrBanks] = mpdMask;
+            disableSingleBank(0x8000 >> bankShift);
         }
         if (filename == "J:REMAP") {
-            bankEnable[(0x8000>>bankShift)] = mpdMask | extSel_Mask;
-            bankEnable[(0x8000>>bankShift) + nrBanks] = dataMask | mpdMask | mpdMask;
+            enableSingleBank(0x8000 >> bankShift);
         }
         if (filename == "J:INT") {
-            busMask = busMask & (~interruptMask);
+            raiseInterrupt();
         }
 #else 
     inline IRAM_ATTR void open() { 
@@ -540,6 +553,7 @@ struct PbiIocb {
     uint8_t romAddrSignatureCheck;
 };
 
+#define STRUCT_LOG
 #ifdef STRUCT_LOG 
 template<class T> 
 struct StructLog { 
@@ -642,13 +656,14 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
-    if (0) { 
+    if (1) { 
         DRAM_ATTR static int lastPrint = -999;
         if (elapsedSec - lastPrint >= 2) { 
             enableCore0WDT();
             portENABLE_INTERRUPTS();
             lastPrint = elapsedSec;
-            printf("time %02d:%02d:%02d iocount: %8d\n", elapsedSec/3600, (elapsedSec/60)%60, elapsedSec%60, diskReadCount);
+            printf("time %02d:%02d:%02d iocount: %8d  irq: %d\n", 
+                elapsedSec/3600, (elapsedSec/60)%60, elapsedSec%60, diskReadCount, pbiInterruptCount);
             fflush(stdout);
             portDISABLE_INTERRUPTS();
             disableCore0WDT();
@@ -781,14 +796,23 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         }
 #endif // ENABLE_SIO 
     } else if (pbiRequest->cmd == 8) { // IRQ
+        pbiRequest->carry = interruptRequested;  
+        clearInterrupt();
+        if (1) { 
+            enableCore0WDT();
+            portENABLE_INTERRUPTS();
+            printf("IRQ, req=%d: ", pbiRequest->carry);
+            StructLog<PbiIocb>::printEntry(*pbiRequest);
+            fflush(stdout);
+            portDISABLE_INTERRUPTS();
+            disableCore0WDT();
+        }
+
         pbiRequest->y = 1; // assume success
-        busMask = busMask | interruptMask; // turn off interrupt 
-        //busMask = busMask & (~interruptMask); // turn off interrupt 
 
         //REG_WRITE(GPIO_OUT1_W1TC_REG, interruptMask);
         atariRam[712]++; // TMP: increment border color as visual indicator 
         pbiInterruptCount++;
-        pbiRequest->carry = 1;
     } else if (pbiRequest->cmd == 9) { // REMAP
         // called after each command to re-enable the bus, we leave
         // pbiRequest->{a,x,y,carry} containing the previous command results
@@ -824,10 +848,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
             psram[addr]++;
         }
     } 
-
     pbiRequest->req = 0;
-    //atariRam[0x0600] = 0;
-
 }
 
 DRAM_ATTR static uint8_t dummyMem[0x400];
@@ -1076,7 +1097,9 @@ void IRAM_ATTR core0Loop() {
         if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { // XXSECOND
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
-                
+     
+            //if (elapsedSec > 3) raiseInterrupt();
+
             if (elapsedSec == 8 && diskReadCount == 0) {
                 memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
                 addSimKeypress("PRINT PEEK(53759)\233POKE 53759,1\233A=USR(1545)\233");
@@ -1086,7 +1109,6 @@ void IRAM_ATTR core0Loop() {
                 addSimKeypress("    \233E.\"J\233");
                 //addSimKeypress("    \233DOS\233     \233DIR D2:\233");
             }
-            //busMask &= ~interruptMask;
 
             #ifndef FAKE_CLOCK
             if (1) { 
@@ -1165,10 +1187,6 @@ void threadFunc(void *) {
 #endif
     printf("opt.fakeClock %d opt.histRunSec %.2f\n", opt.fakeClock, opt.histRunSec);
     printf("GIT: " GIT_VERSION " \n");
-    printf("bankOffsetMask %x bankMask %x BANKSEL_RD %d BANKSEL_RAM %d nrBanks %d bankSel_rd %x\n",
-        bankOffsetMask, bankMask, BANKSEL_RD, BANKSEL_RAM, nrBanks,
-        (readWriteMask & readWriteMask) >> (readWriteShift - bankBits - 1));
-
 
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     uint32_t oldint;
@@ -1615,7 +1633,7 @@ void setup() {
         pinMode(mpdPin, OUTPUT);
         digitalWrite(mpdPin, 1);
         pinMode(interruptPin, OUTPUT);
-        digitalWrite(interruptPin, 0);
+        digitalWrite(interruptPin, 1);
     }
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;

@@ -71,8 +71,8 @@ ESP32_IOCB_LOC004E
     .byt $be
 ESP32_IOCB_LOC004F
     .byt $ef
-ESP32_IOCB_CHECKADDR                     // check byte to confirm code is compiled at the right location
-    .byt * / $100 
+ESP32_IOCB_PDIMSK 
+    .byt $0
 
 // todo - figure out how to reserve this much space for a second IOCB without
 // replicating it all here
@@ -107,8 +107,8 @@ IESP32_IOCB_LOC004E
     .byt $be
 IESP32_IOCB_LOC004F
     .byt $ef
-IESP32_IOCB_CHECKADDR                     // check byte to confirm code is compiled at the right location
-    .byt * / $100 
+IESP32_IOCB_PDIMSK 
+    .byt $0
 
 
 TEST_ENTRY
@@ -122,10 +122,6 @@ PBI_INIT
     lda PDVMSK  // enable this device's bit in PDVMSK
     ora #PDEVNUM
     sta PDVMSK  
-    lda PDIMSK  // enable this device's bit in PDIMSK
-    // XXX disable interrupts until working
-    //ora #PDEVNUM 
-    sta PDIMSK
 
  ;Put device name in Handler table HATABS
      LDX #0
@@ -162,6 +158,11 @@ L1
     sta $0600,x
     dex
     bpl L1
+
+    lda PDIMSK  // enable this device's bit in PDIMSK
+    // XXX disable interrupts until working
+    //ora #PDEVNUM 
+    sta PDIMSK
     rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -169,11 +170,8 @@ L1
 
 PBI_IO
     sta ESP32_IOCB_A
-    stx ESP32_IOCB_X
-    sty ESP32_IOCB_Y
-    ldy #0 
     lda #7
-    jmp PBI_ALL
+    jmp PBI_COMMAND_COMMON
 
 PBI_ISR     
     // TODO: When bus is detached, 0xd1ff will read high and we will be 
@@ -185,9 +183,27 @@ PBI_ISR
     sta IESP32_IOCB_A
     stx IESP32_IOCB_X
     sty IESP32_IOCB_Y
+
+    // save and clear PDIMSK. paranoid in case we could interrupt one of our normal driver commands 
+    lda PDIMSK  
+    ora #PDEVNUM
+    sta IESP32_IOCB_PDIMSK
+    lda PDIMSK
+    and #$ff - PDEVNUM 
+    sta PDIMSK
+
     ldy #IESP32_IOCB - ESP32_IOCB 
     lda #8
-    jmp PBI_ALL
+    jsr PBI_ALL
+
+    pha
+    lda PDIMSK
+    ora IESP32_IOCB_PDIMSK
+    sta PDIMSK
+    pla 
+
+    rts
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 // CIO ROUTINES 
@@ -195,68 +211,71 @@ PBI_ISR
 PBI_OPEN
 // check IOCBCHIDZ see if this is for us
     sta ESP32_IOCB_A
-    stx ESP32_IOCB_X
-    sty ESP32_IOCB_Y
-    ldy #0 
     lda #1 
-    JMP PBI_ALL
+    JMP PBI_COMMAND_COMMON
 
 PBI_CLOSE
     sta ESP32_IOCB_A
-    stx ESP32_IOCB_X
-    sty ESP32_IOCB_Y
-    ldy #0 
     lda #2 // cmd close
-    JMP PBI_ALL
+    JMP PBI_COMMAND_COMMON
 
 PBI_GETB
     sta ESP32_IOCB_A
-    stx ESP32_IOCB_X
-    sty ESP32_IOCB_Y
-    ldy #0 
-    lda #3 // cmd close
-    JMP PBI_ALL
+    lda #3 // cmd getb
+    JMP PBI_COMMAND_COMMON
 
 PBI_PUTB
     sta ESP32_IOCB_A
-    stx ESP32_IOCB_X
-    sty ESP32_IOCB_Y
-    ldy #0 
     lda #4 // cmd close
-    JMP PBI_ALL
+    JMP PBI_COMMAND_COMMON
 
 PBI_STATUS
     sta ESP32_IOCB_A
-    stx ESP32_IOCB_X
-    sty ESP32_IOCB_Y
-    ldy #0 
-    lda #5 // cmd close
-    JMP PBI_ALL
+    lda #5 // cmd status
+    JMP PBI_COMMAND_COMMON
 
 PBI_SPECIAL
     sta ESP32_IOCB_A
+    lda #6 // cmd special
+    // fall through to PBI_COMMAND_COMMON
+
+PBI_COMMAND_COMMON
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y
     ldy #0 
-    lda #6 // cmd close
+    
+    pha
+    lda PDIMSK
+    and #$ff - PDEVNUM 
+    sta PDIMSK
+    pla 
 
+    jsr PBI_ALL
 
-PBI_ALL
+    pha 
+    lda PDIMSK
+    ora #PDEVNUM 
+    sta PDIMSK
+    pla
+        
+    rts 
+
+PBI_ALL  
+    // Shared code between commands and interrupts 
     // A contains the command selected by entry stubs above 
     // Y contains the IOCB offset, selecting either normal IOCB or the interrupt IOCB 
     // TODO: need to make sure this request is for this device by checking 
     // for this device's bit to be set in NDEVREQ
 
     sta ESP32_IOCB_CMD,y
-    lda NDEVREQ
-    ora #PDEVNUM
-    bne CONTINUE
-    clc // not us, return 
-    jmp RESTORE_REGS_AND_RETURN  
-
-    rts
-
-CONTINUE 
+    
+    // lda NDEVREQ   // it has to be us, how else would be be here with this ROM active 
+    // ora #PDEVNUM
+    // bne CONTINUE
+    // clc // not us, return 
+    // jmp RESTORE_REGS_AND_RETURN  
+    //CONTINUE 
+    
     lda CRITIC
     sta ESP32_IOCB_CRITIC,y
 
@@ -264,7 +283,7 @@ CONTINUE
 
     // save and then mask interrupts
     php 
-    plp 
+    pla 
     sta ESP32_IOCB_6502PSP,y
 
     lda #$40 // TODO find the NMIEN shadow register and restore proper value
