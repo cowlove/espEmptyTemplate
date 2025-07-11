@@ -110,10 +110,7 @@ IRAM_ATTR void raiseInterrupt() {
     if ((atariRam[PDIMSK] & pdiDeviceNum) == pdiDeviceNum) {
         deferredInterrupt = 0;  
         bankD100Read[0xd1ff & bankOffsetMask] = 0x1;
-        for(int i = 0; i < nrBanks; i++) { 
-            bankEnable[i | BANKSEL_ROM | BANKSEL_RD] |= interruptMask;
-            bankEnable[i | BANKSEL_RAM | BANKSEL_RD] |= interruptMask;
-        }
+        REG_WRITE(GPIO_ENABLE1_W1TS_REG, interruptMask);
         interruptRequested = 1;
     } else { 
         deferredInterrupt = 1;
@@ -121,10 +118,7 @@ IRAM_ATTR void raiseInterrupt() {
 }
 IRAM_ATTR void clearInterrupt() { 
     bankD100Read[0xd1ff & bankOffsetMask] = 0x0;
-    for(int i = 0; i < nrBanks; i++) { 
-        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] &= (~interruptMask);
-        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] &= (~interruptMask);
-    }
+    REG_WRITE(GPIO_ENABLE1_W1TC_REG, interruptMask);
     interruptRequested = 0;
 }
 
@@ -649,9 +643,6 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     busMon.enable = true;
     structLogs.pbi.add(*pbiRequest);
     while(busMon.available()) { busMon.get(); }                
-#ifndef RAM_TEST
-    diskReadCount++;
-#endif
 
 #ifdef BUS_DETACH
     // Disable PBI memory device 
@@ -935,7 +926,7 @@ void IRAM_ATTR core0Loop() {
 
         if (1) { 
             static uint32_t ltsc = 0;
-            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 3000) { 
+            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 100) { 
                 ltsc = XTHAL_GET_CCOUNT();
                 raiseInterrupt();
             }
@@ -1085,7 +1076,12 @@ void IRAM_ATTR core0Loop() {
         if (1) {  
             //volatile
             PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
-            if (pbiRequest[0].req != 0) { handlePbiRequest(&pbiRequest[0]); }
+            if (pbiRequest[0].req != 0) { 
+                #ifndef RAM_TEST
+                diskReadCount++;
+                #endif
+                handlePbiRequest(&pbiRequest[0]); 
+            }
             if (pbiRequest[1].req != 0) { handlePbiRequest(&pbiRequest[1]); }
         }
 #if 0 
@@ -1118,7 +1114,7 @@ void IRAM_ATTR core0Loop() {
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
      
-            //if (elapsedSec > 30) raiseInterrupt();
+            if (elapsedSec == 30) raiseInterrupt();
 
             if (elapsedSec == 8 && diskReadCount == 0) {
                 memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
