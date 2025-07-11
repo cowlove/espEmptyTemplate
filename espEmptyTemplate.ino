@@ -87,7 +87,7 @@ DRAM_ATTR uint8_t diskImg[] = {
 };
 
 
-BUSCTL_VOLATILE DRAM_ATTR uint32_t busMask = extSel_Mask | interruptMask;
+BUSCTL_VOLATILE DRAM_ATTR uint32_t busMask = extSel_Mask;
 
 IRAM_ATTR void memoryMapInit() { 
     for(int i = 0; i < nrBanks; i++) {
@@ -104,15 +104,27 @@ IRAM_ATTR void memoryMapInit() {
     banks[d100Bank | BANKSEL_RAM | BANKSEL_RD ] = &bankD100Read[0]; 
 }
 
-int interruptRequested = 0;
-IRAM_ATTR void raiseInterrupt() { 
-    bankD100Read[0xd1ff & bankOffsetMask] = 0x1;
-    busMask &= (~interruptMask);
-    interruptRequested = 1;
+DRAM_ATTR int deferredInterrupt = 0, interruptRequested = 0;
+
+IRAM_ATTR void raiseInterrupt() {
+    if ((atariRam[PDIMSK] & pdiDeviceNum) == pdiDeviceNum) {
+        deferredInterrupt = 0;  
+        bankD100Read[0xd1ff & bankOffsetMask] = 0x1;
+        for(int i = 0; i < nrBanks; i++) { 
+            bankEnable[i | BANKSEL_ROM | BANKSEL_RD] |= interruptMask;
+            bankEnable[i | BANKSEL_RAM | BANKSEL_RD] |= interruptMask;
+        }
+        interruptRequested = 1;
+    } else { 
+        deferredInterrupt = 1;
+    }
 }
 IRAM_ATTR void clearInterrupt() { 
     bankD100Read[0xd1ff & bankOffsetMask] = 0x0;
-    busMask |= interruptMask;
+    for(int i = 0; i < nrBanks; i++) { 
+        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] &= (~interruptMask);
+        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] &= (~interruptMask);
+    }
     interruptRequested = 0;
 }
 
@@ -143,8 +155,8 @@ IRAM_ATTR void disableBus() {
     // than going through all 256 page table entries 
     delayTicks(240 * 100);    
     for(int i = 0; i < nrBanks; i++) { 
-        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = mpdMask | interruptMask;
-        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = mpdMask | interruptMask;
+        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = 0;
+        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = 0;
     }
 }
 
@@ -434,11 +446,11 @@ DRAM_ATTR const char *defaultProgram =
         "42 PUT #1,A + 1 \233"
         "43 CLOSE #1 \233"
         "50 A=USR(1536) \233"
-        "51 PRINT \"    >>> \"; \233"
-        "52 PRINT COUNT; \233"
+        "51 PRINT \"->\"; \233"
+        //"52 PRINT COUNT; \233"
         "53 COUNT = COUNT + 1 \233"
         //"54 OPEN #1,4,0,\"D2:DUP.SYS\" \233"
-        "54 OPEN #1,4,0,\"D2:X32Z.DOS\" \233"
+        "54 OPEN #1,4,0,\"D1:X32Z.DOS\" \233"
         "55 POINT #1,SEC,BYT \233"
         "56 GET #1,A \233"
         "57 CLOSE #1 \233"
@@ -656,14 +668,14 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
-    if (0) { 
+    if (1) { 
         DRAM_ATTR static int lastPrint = -999;
         if (elapsedSec - lastPrint >= 2) { 
             enableCore0WDT();
             portENABLE_INTERRUPTS();
             lastPrint = elapsedSec;
-            printf("time %02d:%02d:%02d iocount: %8d  irq: %d\n", 
-                elapsedSec/3600, (elapsedSec/60)%60, elapsedSec%60, diskReadCount, pbiInterruptCount);
+            printf("time %02d:%02d:%02d iocount: %8d  irq: %d pin 48 %d\n", 
+                elapsedSec/3600, (elapsedSec/60)%60, elapsedSec%60, diskReadCount, pbiInterruptCount, digitalRead(48));
             fflush(stdout);
             portDISABLE_INTERRUPTS();
             disableCore0WDT();
@@ -915,11 +927,14 @@ void IRAM_ATTR core0Loop() {
 #endif 
                 if (lastWrite == 0xd800) break;
                 if (lastWrite == 0xd820) break;
+                if (lastWrite == PDIMSK) break;
                 __asm__ __volatile__ ("nop");
                 __asm__ __volatile__ ("nop");
                 __asm__ __volatile__ ("nop");
             }
         }
+        if (deferredInterrupt && (atariRam[PDIMSK] & pdiDeviceNum) == pdiDeviceNum)
+            raiseInterrupt();
 
         if (1) { // XXMEMTEST
             //for(int i = 0; i < sizeof(dummyMem); i++) {
@@ -1098,7 +1113,7 @@ void IRAM_ATTR core0Loop() {
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
      
-            //if (elapsedSec > 3) raiseInterrupt();
+            if (elapsedSec > 30) raiseInterrupt();
 
             if (elapsedSec == 8 && diskReadCount == 0) {
                 memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
@@ -1106,7 +1121,7 @@ void IRAM_ATTR core0Loop() {
             }
 
             if (elapsedSec == 15 && diskReadCount > 0) {
-                addSimKeypress("    \233E.\"J\233");
+                addSimKeypress("E.\"J\233");
                 //addSimKeypress("    \233DOS\233     \233DIR D2:\233");
             }
 
@@ -1632,8 +1647,8 @@ void setup() {
         digitalWrite(extSel_Pin, 1);
         pinMode(mpdPin, OUTPUT);
         digitalWrite(mpdPin, 1);
-        pinMode(interruptPin, OUTPUT);
-        digitalWrite(interruptPin, 1);
+        //pinMode(interruptPin, INPUT);
+        //digitalWrite(interruptPin, 1);
     }
     for(int i = 0; i < 0; i++) { 
         uint32_t r0 = *gpio0;

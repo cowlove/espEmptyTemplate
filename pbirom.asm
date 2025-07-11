@@ -8,6 +8,7 @@ RTCLOK  =   $0012   //;Real time clock, 3 bytes
 NMIEN   =   $D40E   //;NMI enable mask on Antic
 NEWDEV  =   $E486   //;routine to add device to HATABS, doesn't seem to work, see below 
 IOCBCHIDZ = $0020   //;page 0 copy of current IOCB 
+SCREENMEM = $9c40
 
 DEVNAM  =   'J'     //;device letter J drive in this device's case
 PDEVNUM =   1       //;Parallel device bit mask - 1 in this device's case.  $1,2,4,8,10,20,40, or $80   
@@ -179,29 +180,42 @@ PBI_ISR
     //return with clc, it hangs earlier with just 2 io requests.
     //sec
     //rts
-
+    inc SCREENMEM
     sta IESP32_IOCB_A
     stx IESP32_IOCB_X
     sty IESP32_IOCB_Y
 
-    // save and clear PDIMSK. paranoid in case we could interrupt one of our normal driver commands 
+    // save and clear PDIMSK, then restore we could interrupt one of our normal driver commands
+    // that has just cleared PDIMSK 
+#if 0 
     lda PDIMSK  
     ora #PDEVNUM
     sta IESP32_IOCB_PDIMSK
     lda PDIMSK
     and #$ff - PDEVNUM 
     sta PDIMSK
+#endif
+    lda PDIMSK  
+    and #$ff - PDEVNUM 
+    sta PDIMSK
 
     ldy #IESP32_IOCB - ESP32_IOCB 
     lda #8
     jsr PBI_ALL
+    INC SCREENMEM+1
 
+#if 0
     pha
     lda PDIMSK
     ora IESP32_IOCB_PDIMSK
     sta PDIMSK
     pla 
+#endif
+    lda PDIMSK  
+    ora #PDEVNUM 
+    sta PDIMSK
 
+    INC SCREENMEM+2
     rts
 
 
@@ -240,6 +254,7 @@ PBI_SPECIAL
     // fall through to PBI_COMMAND_COMMON
 
 PBI_COMMAND_COMMON
+    inc SCREENMEM+40
     stx ESP32_IOCB_X
     sty ESP32_IOCB_Y
     ldy #0 
@@ -251,6 +266,7 @@ PBI_COMMAND_COMMON
     pla 
 
     jsr PBI_ALL
+    inc SCREENMEM+41
 
     pha 
     lda PDIMSK
@@ -258,6 +274,7 @@ PBI_COMMAND_COMMON
     sta PDIMSK
     pla
         
+    inc SCREENMEM+42
     rts 
 
 PBI_ALL  

@@ -49,8 +49,8 @@ void IRAM_ATTR iloop_pbi() {
 //    uint32_t lastTscFall = XTHAL_GET_CCOUNT(); 
     while((dedic_gpio_cpu_ll_read_in()) == 0) {}
   
-    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask | interruptMask); 
-    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask | interruptMask); 
+    REG_WRITE(GPIO_ENABLE1_W1TS_REG, extSel_Mask | mpdMask); 
+    REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
     RAM_VOLATILE uint8_t * const bankD800[2] = { &pbiROM[0], &atariRam[0xd800]};
     uint32_t lastWriteR0 = 0;
