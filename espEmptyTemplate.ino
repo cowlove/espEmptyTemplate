@@ -450,7 +450,7 @@ DRAM_ATTR const char *defaultProgram =
         //"52 PRINT COUNT; \233"
         "53 COUNT = COUNT + 1 \233"
         //"54 OPEN #1,4,0,\"D2:DUP.SYS\" \233"
-        "54 OPEN #1,4,0,\"D1:X32Z.DOS\" \233"
+        "54 OPEN #1,4,0,\"D2:X32Z.DOS\" \233"
         "55 POINT #1,SEC,BYT \233"
         "56 GET #1,A \233"
         "57 CLOSE #1 \233"
@@ -495,9 +495,6 @@ struct AtariIO {
         }
         if (filename == "J:REMAP") {
             enableSingleBank(0x8000 >> bankShift);
-        }
-        if (filename == "J:INT") {
-            raiseInterrupt();
         }
 #else 
     inline IRAM_ATTR void open() { 
@@ -810,7 +807,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     } else if (pbiRequest->cmd == 8) { // IRQ
         pbiRequest->carry = interruptRequested;  
         clearInterrupt();
-        if (1) { 
+        if (0) { 
             enableCore0WDT();
             portENABLE_INTERRUPTS();
             printf("IRQ, req=%d: ", pbiRequest->carry);
@@ -935,6 +932,14 @@ void IRAM_ATTR core0Loop() {
         }
         if (deferredInterrupt && (atariRam[PDIMSK] & pdiDeviceNum) == pdiDeviceNum)
             raiseInterrupt();
+
+        if (1) { 
+            static uint32_t ltsc = 0;
+            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 1000) { 
+                ltsc = XTHAL_GET_CCOUNT();
+                raiseInterrupt();
+            }
+        }
 
         if (1) { // XXMEMTEST
             //for(int i = 0; i < sizeof(dummyMem); i++) {
