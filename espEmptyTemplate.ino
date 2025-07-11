@@ -446,8 +446,8 @@ DRAM_ATTR const char *defaultProgram =
         "42 PUT #1,A + 1 \233"
         "43 CLOSE #1 \233"
         "50 A=USR(1536) \233"
-        "51 PRINT \"->\"; \233"
-        //"52 PRINT COUNT; \233"
+        "51 PRINT \" -> \"; \233"
+        "52 PRINT COUNT; \233"
         "53 COUNT = COUNT + 1 \233"
         //"54 OPEN #1,4,0,\"D2:DUP.SYS\" \233"
         "54 OPEN #1,4,0,\"D2:X32Z.DOS\" \233"
@@ -922,7 +922,7 @@ void IRAM_ATTR core0Loop() {
 #ifdef RAM_TEST
                 if (lastWrite == 0x0600) break;
 #endif 
-                if (lastWrite == 0xd800) break;
+                if (lastWrite == 0xd830) break;
                 if (lastWrite == 0xd820) break;
                 if (lastWrite == PDIMSK) break;
                 __asm__ __volatile__ ("nop");
@@ -935,7 +935,7 @@ void IRAM_ATTR core0Loop() {
 
         if (1) { 
             static uint32_t ltsc = 0;
-            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 1000) { 
+            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 3000) { 
                 ltsc = XTHAL_GET_CCOUNT();
                 raiseInterrupt();
             }
@@ -1118,7 +1118,7 @@ void IRAM_ATTR core0Loop() {
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
      
-            if (elapsedSec > 30) raiseInterrupt();
+            //if (elapsedSec > 30) raiseInterrupt();
 
             if (elapsedSec == 8 && diskReadCount == 0) {
                 memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
