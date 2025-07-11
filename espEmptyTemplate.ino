@@ -67,10 +67,12 @@ IRAM_ATTR inline void delayTicks(int ticks) {
     while(XTHAL_GET_CCOUNT() - startTsc < ticks) {}
 }
 
-DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 2];
-DRAM_ATTR uint32_t bankEnable[nrBanks * 2];
+DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 4];
+DRAM_ATTR uint32_t bankEnable[nrBanks * 4];
 DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024] = {0x0};
-DRAM_ATTR RAM_VOLATILE uint8_t atariRomWrites[64 * 1024] = {0x0};
+DRAM_ATTR RAM_VOLATILE uint8_t dummyRam[bankSize] = {0x0};
+DRAM_ATTR RAM_VOLATILE uint8_t bankD100Write[bankSize] = {0x0};
+DRAM_ATTR RAM_VOLATILE uint8_t bankD100Read[bankSize] = {0x0};
 //DRAM_ATTR RAM_VOLATILE uint8_t cartROM[] = {
 //#include "joust.h"
 //};
@@ -89,23 +91,35 @@ BUSCTL_VOLATILE DRAM_ATTR uint32_t busMask = extSel_Mask | interruptMask;
 
 IRAM_ATTR void memoryMapInit() { 
     for(int i = 0; i < nrBanks; i++) {
-        banks[i] = &atariRomWrites[64 * 1024 / nrBanks * i];
-        banks[i + nrBanks] = &atariRam[64 * 1024 / nrBanks * i];
+        banks[i | BANKSEL_ROM | BANKSEL_RD] = &dummyRam[0];
+        banks[i | BANKSEL_ROM | BANKSEL_WR] = &dummyRam[0];
+        banks[i | BANKSEL_RAM | BANKSEL_RD] = &atariRam[64 * 1024 / nrBanks * i];
+        banks[i | BANKSEL_RAM | BANKSEL_WR] = &atariRam[64 * 1024 / nrBanks * i];
     };
+
+    static const int d100Bank = (0xd1ff >> bankShift);
+    banks[d100Bank | BANKSEL_ROM | BANKSEL_WR ] = &bankD100Write[0]; 
+    banks[d100Bank | BANKSEL_ROM | BANKSEL_RD ] = &bankD100Read[0]; 
+    banks[d100Bank | BANKSEL_RAM | BANKSEL_WR ] = &bankD100Write[0]; 
+    banks[d100Bank | BANKSEL_RAM | BANKSEL_RD ] = &bankD100Read[0]; 
+    bankD100Read[0xd1ff & bankOffsetMask] = 0x1;
 }
 
 IRAM_ATTR void enableBus() { 
     for(int i = 0; i < nrBanks; i++) { 
-        bankEnable[i] = mpdMask | extSel_Mask | interruptMask;
-        bankEnable[i + nrBanks] = dataMask | mpdMask | extSel_Mask | interruptMask;
+        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = mpdMask | extSel_Mask | interruptMask;
+        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = dataMask | mpdMask | extSel_Mask | interruptMask;
     }
-    bankEnable[0xd100 >> bankShift] |= dataMask;
+
+    // enable "ROM" reads and writes to 0xd100-0xd1ff 
+    static const int d100Bank = (0xd1ff >> bankShift);
+    bankEnable[d100Bank | BANKSEL_ROM | BANKSEL_RD] |= dataMask;
     delayTicks(240 * 100);
 }
 
-IRAM_ATTR void enableSingleBank(int b) {
-    bankEnable[b] = mpdMask | extSel_Mask | interruptMask;
-    bankEnable[b + nrBanks] = dataMask | mpdMask | extSel_Mask | interruptMask;
+IRAM_ATTR void enableSingleBank(int i) {
+    bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = mpdMask | extSel_Mask | interruptMask;
+    bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = dataMask | mpdMask | extSel_Mask | interruptMask;
 }
 
 IRAM_ATTR void disableBus() {
@@ -114,8 +128,8 @@ IRAM_ATTR void disableBus() {
     // than going through all 256 page table entries 
     delayTicks(240 * 100);    
     for(int i = 0; i < nrBanks; i++) { 
-        bankEnable[i] = mpdMask | interruptMask;
-        bankEnable[i + nrBanks] = mpdMask | interruptMask;
+        bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = mpdMask | interruptMask;
+        bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = mpdMask | interruptMask;
     }
 }
 
@@ -628,7 +642,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
-    if (1) { 
+    if (0) { 
         DRAM_ATTR static int lastPrint = -999;
         if (elapsedSec - lastPrint >= 2) { 
             enableCore0WDT();
@@ -899,7 +913,8 @@ void IRAM_ATTR core0Loop() {
                     if (cmd == 1) { 
                         // remap 
                         for(int mem = 0x8000; mem < 0x8400; mem += 0x100) { 
-                            banks[nrBanks + ((mem + 0x400) >> bankShift)] = &atariRam[mem];
+                            banks[nrBanks * 1 + ((mem + 0x400) >> bankShift)] = &atariRam[mem];
+                            banks[nrBanks * 3 + ((mem + 0x400) >> bankShift)] = &atariRam[mem];
                         }
                     }
                     if (0 && cmd == 2) {  
@@ -1064,7 +1079,7 @@ void IRAM_ATTR core0Loop() {
                 
             if (elapsedSec == 8 && diskReadCount == 0) {
                 memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
-                addSimKeypress("A=USR(1545)\233");
+                addSimKeypress("PRINT PEEK(53759)\233POKE 53759,1\233A=USR(1545)\233");
             }
 
             if (elapsedSec == 15 && diskReadCount > 0) {
@@ -1088,7 +1103,7 @@ void IRAM_ATTR core0Loop() {
                             psram[i] = 0;
                     }
                 }
-                if (secondsWithoutRead == 20) { 
+                if (secondsWithoutRead == 30) { 
                     exitReason = "Timeout with no IO requests";
                     break;
                 }
@@ -1150,6 +1165,9 @@ void threadFunc(void *) {
 #endif
     printf("opt.fakeClock %d opt.histRunSec %.2f\n", opt.fakeClock, opt.histRunSec);
     printf("GIT: " GIT_VERSION " \n");
+    printf("bankOffsetMask %x bankMask %x BANKSEL_RD %d BANKSEL_RAM %d nrBanks %d bankSel_rd %x\n",
+        bankOffsetMask, bankMask, BANKSEL_RD, BANKSEL_RAM, nrBanks,
+        (readWriteMask & readWriteMask) >> (readWriteShift - bankBits - 1));
 
 
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];

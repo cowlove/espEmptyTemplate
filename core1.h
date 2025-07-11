@@ -62,7 +62,7 @@ static const struct {
    float histRunSec   = TEST_SEC;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 1800;
+   float histRunSec   = 60;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -112,6 +112,7 @@ static const int      addrMask = 0xffff << addrShift;  //
 static const int      refreshPin = 1;
 static const int      refreshMask = (1 << refreshPin);
 static const int      readWritePin = 21;
+static const int      readWriteShift = readWritePin;
 static const int      readWriteMask = (1 << readWritePin); 
 
 //GPIO1 pins
@@ -162,18 +163,26 @@ static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,
 static const int bankBits = 8;
 static const int nrBanks = 1 << bankBits;
 static const int bankSize = 64 * 1024 / nrBanks;
-static const uint16_t bankMask = 0xffff0000 >> bankBits;
+static const uint16_t bankOffsetMask = bankSize - 1;
+static const uint16_t bankMask = ~bankOffsetMask;
 static const int bankShift = 16 - bankBits;
+
+static const int BANKSEL_RD = (1 << (bankBits + 1));
+static const int BANKSEL_WR = 0;
+static const int BANKSEL_RAM = (1 << bankBits);
+static const int BANKSEL_ROM = 0;
 
 #define BUSCTL_VOLATILE volatile
 #define RAM_VOLATILE //volatile
 
-extern DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 2];
-extern DRAM_ATTR uint32_t bankEnable[nrBanks * 2];
+extern DRAM_ATTR RAM_VOLATILE uint8_t *banks[nrBanks * 4];
+extern DRAM_ATTR uint32_t bankEnable[nrBanks * 4];
 extern DRAM_ATTR RAM_VOLATILE uint8_t atariRam[64 * 1024];
 extern DRAM_ATTR RAM_VOLATILE uint8_t atariRomWrites[64 * 1024];
 extern DRAM_ATTR RAM_VOLATILE uint8_t cartROM[];
 extern DRAM_ATTR RAM_VOLATILE uint8_t pbiROM[2 * 1024];
+extern DRAM_ATTR RAM_VOLATILE uint8_t bankD100Write[bankSize];
+extern DRAM_ATTR RAM_VOLATILE uint8_t bankD100Read[bankSize];
 
 extern BUSCTL_VOLATILE uint32_t busMask;
 IRAM_ATTR void enableBus();
