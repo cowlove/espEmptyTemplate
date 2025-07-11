@@ -656,7 +656,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
-    if (1) { 
+    if (0) { 
         DRAM_ATTR static int lastPrint = -999;
         if (elapsedSec - lastPrint >= 2) { 
             enableCore0WDT();
