@@ -431,10 +431,11 @@ DRAM_ATTR Hist2 profilers[numProfilers];
 DRAM_ATTR int ramReads = 0, ramWrites = 0;
 
 DRAM_ATTR const char *defaultProgram = 
-        "10 OPEN #1,4,0,\"J2:\" \233"
+        "10 REM \233" 
+        "11 OPEN #1,4,0,\"J2:\" \233"
         "20 GET #1,A  \233"
-      //  "30 PRINT \"   \"; \233"
-      //  "35 PRINT A;  \233"
+        //"30 PRINT \"   \"; \233"
+        //"35 PRINT A;  \233"
         "40 CLOSE #1  \233"
         "41 OPEN #1,8,0,\"J\" \233"
         "42 PUT #1,A + 1 \233"
@@ -656,7 +657,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
-    if (1) { 
+    if (0) { 
         DRAM_ATTR static int lastPrint = -999;
         if (elapsedSec - lastPrint >= 2) { 
             enableCore0WDT();
@@ -669,7 +670,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
             disableCore0WDT();
         }
     }
-    if (0) { 
+    if (0 && elapsedSec > 8) { 
         enableCore0WDT();
         portENABLE_INTERRUPTS();
         printf("IO request: ");
@@ -798,7 +799,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     } else if (pbiRequest->cmd == 8) { // IRQ
         pbiRequest->carry = interruptRequested;  
         clearInterrupt();
-        if (0) { 
+        if (1) { 
             enableCore0WDT();
             portENABLE_INTERRUPTS();
             printf("IRQ, req=%d: ", pbiRequest->carry);
@@ -924,9 +925,9 @@ void IRAM_ATTR core0Loop() {
         if (deferredInterrupt && (atariRam[PDIMSK] & pdiDeviceNum) == pdiDeviceNum)
             raiseInterrupt();
 
-        if (1) { 
+        if (0 && elapsedSec > 15) { // XXINT
             static uint32_t ltsc = 0;
-            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 100) { 
+            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 50) { 
                 ltsc = XTHAL_GET_CCOUNT();
                 raiseInterrupt();
             }
@@ -981,16 +982,15 @@ void IRAM_ATTR core0Loop() {
             #endif
         }
 
-//#ifdef FAKE_CLOCK
-#if 1
-        if (0 && elapsedSec > 10) { //XXFAKEIO
+#ifdef FAKE_CLOCK || #defined RAM_TEST
+        if (1 && elapsedSec > 10) { //XXFAKEIO
             // Stuff some fake PBI commands to exercise code in the core0 loop during timing tests 
             static uint32_t lastTsc;
-            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * 2) {
+            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000) {
                 lastTsc = XTHAL_GET_CCOUNT();
                 volatile PbiIocb *pbiRequest = (PbiIocb *)&pbiROM[0x20];
                 static int step = 0;
-                if (0 && step == 1) { 
+                if (step == 1) { 
                     // stuff a fake CIO put request
                     #ifdef SIM_KEYPRESS_FILE
                     fakeFile.filename = "J:KEYS";
@@ -1036,7 +1036,7 @@ void IRAM_ATTR core0Loop() {
         }
 
 #ifdef SIM_KEYPRESS
-        if (elapsedSec < 40) { 
+        if (elapsedSec < 30) { 
             static uint32_t lastTsc;
             static const int keyMs = 150;
             if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * keyMs) {
@@ -1114,14 +1114,14 @@ void IRAM_ATTR core0Loop() {
             startTsc = XTHAL_GET_CCOUNT();
             elapsedSec++;
      
-            if (elapsedSec == 30) raiseInterrupt();
+            //if (elapsedSec == 30) raiseInterrupt();
 
             if (elapsedSec == 8 && diskReadCount == 0) {
                 memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
-                addSimKeypress("PRINT PEEK(53759)\233POKE 53759,1\233A=USR(1545)\233");
+                addSimKeypress("A=USR(1545)\233");
             }
 
-            if (elapsedSec == 15 && diskReadCount > 0) {
+            if (elapsedSec == 8 && diskReadCount > 0) {
                 addSimKeypress("E.\"J\233");
                 //addSimKeypress("    \233DOS\233     \233DIR D2:\233");
             }
@@ -1419,6 +1419,8 @@ void threadFunc(void *) {
 #ifndef RAM_TEST
     memReadErrors = -1;
 #endif
+    printf("SUMMARY %10.2f/%ds e%d i% d%d %d %s\n", millis()/1000.0, opt.histRunSec, memReadErrors, 
+    pbiInterruptCount, diskReadCount, exitReason.c_str());
     printf("DONE %10.2f READERR %8d IO %8d BUILT " __TIME__ " Exit reason: %s\n", 
         millis() / 1000.0, memReadErrors, diskReadCount, exitReason.c_str());
     delay(100);
