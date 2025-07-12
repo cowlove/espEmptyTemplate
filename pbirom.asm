@@ -49,6 +49,7 @@ ESP32_IOCB_A
     .byt $ee     ;  A - iocb index * $20 
 ESP32_IOCB_X
     .byt $ee     ;  X -  
+
 ESP32_IOCB_Y
     .byt $ee     ;  Y -  
 ESP32_IOCB_CARRY
@@ -57,6 +58,7 @@ ESP32_IOCB_CRITIC
     .byt $ee
 ESP32_IOCB_6502PSP
     .byt $ee
+
 ESP32_IOCB_NMIEN
     .byt $ee
 ESP32_IOCB_RTCLOK1
@@ -65,6 +67,7 @@ ESP32_IOCB_RTCLOK2
     .byt $ee
 ESP32_IOCB_RTCLOK3
     .byt $de
+
 ESP32_IOCB_LOC004D
     .byt $ad
 ESP32_IOCB_LOC004E
@@ -161,7 +164,7 @@ L1
 
     lda PDIMSK  // enable this device's bit in PDIMSK
     // XXX disable interrupts until working
-    //ora #PDEVNUM 
+    ora #PDEVNUM 
     sta PDIMSK
     rts
 
@@ -177,8 +180,28 @@ PBI_ISR
     // TODO: When bus is detached, 0xd1ff will read high and we will be 
     // called to handle all NMI interrupts.  Need to mask off  Need to check  
     //return with clc, it hangs earlier with just 2 io requests.
-    //sec
+    //clc
     //rts
+#if 1
+    pha
+    //lda PDIMSK
+    //and #$ff - PDEVNUM 
+    //sta PDIMSK
+    lda #8
+    sta IESP32_IOCB_CMD
+    lda #1
+    sta IESP32_IOCB_REQ
+WAIT11
+    lda IESP32_IOCB_REQ
+    bne WAIT11
+    //lda PDIMSK
+    //ora IESP32_IOCB_PDIMSK
+    //sta PDIMSK
+    lda IESP32_IOCB_CARRY,y
+    ror
+    pla
+    rts
+#endif
 
     sta IESP32_IOCB_A
     stx IESP32_IOCB_X

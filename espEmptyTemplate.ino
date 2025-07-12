@@ -27,6 +27,7 @@
 //#include <esp_spi_flash.h>
 #include "esp_partition.h"
 #include "esp_err.h"
+#include <deque>
 
 #if CONFIG_FREERTOS_UNICORE != 1 
 #error Arduino idf core must be compiled with CONFIG_FREERTOS_UNICORE=y and CONFIG_ESP_INT_WDT=n
@@ -562,14 +563,22 @@ struct PbiIocb {
 template<class T> 
 struct StructLog { 
     int maxSize;
+    uint32_t lastTsc;
     StructLog(int maxS = 32) : maxSize(maxS) {}
-    vector<T> log;
-    inline void IRAM_ATTR add(const T &t) { 
-        log.push_back(t);
-        if (log.size() > maxSize) log.erase(log.begin());
+    std::deque<std::pair<uint32_t,T>> log;
+    inline void IRAM_ATTR add(const T &t) {
+        uint32_t tsc = XTHAL_GET_CCOUNT(); 
+        log.push_back(std::pair<uint32_t,T>(tsc - lastTsc, t));
+        lastTsc = tsc;
+        if (log.size() > maxSize) log.pop_front();
     }
     static inline IRAM_ATTR void  printEntry(const T&);
-    inline void IRAM_ATTR print() { for(auto a : log) printEntry(a); }
+    inline void IRAM_ATTR print() { 
+        for(auto a : log) {
+            printf("%-10d : ", a.first);
+            printEntry(a.second);
+        } 
+    }
 };
 template <class T> inline IRAM_ATTR void StructLog<T>::printEntry(const T &a) {
     for(int i = 0; i < sizeof(a); i++) printf("%02x ", ((uint8_t *)&a)[i]);
@@ -592,7 +601,7 @@ struct StructLog {
 DRAM_ATTR struct { 
     StructLog<AtariDCB> dcb; 
     StructLog<AtariIOCB> iocb; 
-    StructLog<PbiIocb> pbi; 
+    StructLog<PbiIocb> pbi = StructLog<PbiIocb>(100);
     StructLog<AtariIOCB> ziocb; 
     StructLog<string> opens;
     void print() {
@@ -641,13 +650,21 @@ DRAM_ATTR int elapsedSec = 0;
 // timing on the core1 loop
 
 void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) { 
-    busMon.enable = true;
-    structLogs.pbi.add(*pbiRequest);
-    while(busMon.available()) { busMon.get(); }                
-
+    // TMP: put the shortest, quickest interrupt service possible
+    // here 
+    if(1 && pbiRequest->cmd == 8) { 
+        pbiRequest->carry = interruptRequested;
+        clearInterrupt();
+        pbiRequest->req = 0;
+        pbiInterruptCount++;
+        return;
+    }
 #ifdef BUS_DETACH
     // Disable PBI memory device 
     disableBus();
+    busMon.enable = true;
+    structLogs.pbi.add(*pbiRequest);
+    while(busMon.available()) { busMon.get(); }                
     if (0) { 
         enableCore0WDT();
         portENABLE_INTERRUPTS();
@@ -657,7 +674,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
-    if (0) { 
+    if (1) { 
         DRAM_ATTR static int lastPrint = -999;
         if (elapsedSec - lastPrint >= 2) { 
             enableCore0WDT();
@@ -799,7 +816,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
     } else if (pbiRequest->cmd == 8) { // IRQ
         pbiRequest->carry = interruptRequested;  
         clearInterrupt();
-        if (1) { 
+        if (pbiRequest->carry == 0) { 
             enableCore0WDT();
             portENABLE_INTERRUPTS();
             printf("IRQ, req=%d: ", pbiRequest->carry);
@@ -810,7 +827,7 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         }
 
         pbiRequest->y = 1; // assume success
-
+        pbiRequest->carry = 1;
         //REG_WRITE(GPIO_OUT1_W1TC_REG, interruptMask);
         atariRam[712]++; // TMP: increment border color as visual indicator 
         pbiInterruptCount++;
@@ -927,7 +944,7 @@ void IRAM_ATTR core0Loop() {
 
         if (0 && elapsedSec > 15) { // XXINT
             static uint32_t ltsc = 0;
-            if (elapsedSec > 30 && XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 50) { 
+            if (XTHAL_GET_CCOUNT() - ltsc > 240 * 1000 * 100) { 
                 ltsc = XTHAL_GET_CCOUNT();
                 raiseInterrupt();
             }
@@ -1082,7 +1099,9 @@ void IRAM_ATTR core0Loop() {
                 #endif
                 handlePbiRequest(&pbiRequest[0]); 
             }
-            if (pbiRequest[1].req != 0) { handlePbiRequest(&pbiRequest[1]); }
+            if (pbiRequest[1].req != 0) { 
+                handlePbiRequest(&pbiRequest[1]);
+            }
         }
 #if 0 
         //cycleCount++;
@@ -1419,9 +1438,9 @@ void threadFunc(void *) {
 #ifndef RAM_TEST
     memReadErrors = -1;
 #endif
-    printf("SUMMARY %10.2f/%ds e%d i% d%d %d %s\n", millis()/1000.0, opt.histRunSec, memReadErrors, 
+    printf("SUMMARY %-10.2f/%.0f e%d i%d d%d %s\n", millis()/1000.0, opt.histRunSec, memReadErrors, 
     pbiInterruptCount, diskReadCount, exitReason.c_str());
-    printf("DONE %10.2f READERR %8d IO %8d BUILT " __TIME__ " Exit reason: %s\n", 
+    printf("DONE %-10.2f READERR %-8d IO %-8d BUILT " __TIME__ " Exit reason: %s\n", 
         millis() / 1000.0, memReadErrors, diskReadCount, exitReason.c_str());
     delay(100);
     
