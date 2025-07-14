@@ -35,7 +35,7 @@ WAIT4
     lda CMD
     bne WAIT4   
 
-    ldy #0
+    ldy #255
 LOOP1
     ldx #0
     lda #0
