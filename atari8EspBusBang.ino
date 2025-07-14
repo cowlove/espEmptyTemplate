@@ -87,7 +87,6 @@ DRAM_ATTR uint8_t diskImg[] = {
 #include "disk.h"
 };
 
-
 BUSCTL_VOLATILE DRAM_ATTR uint32_t busMask = extSel_Mask;
 
 IRAM_ATTR void memoryMapInit() { 
@@ -117,6 +116,7 @@ IRAM_ATTR void raiseInterrupt() {
         deferredInterrupt = 1;
     }
 }
+
 IRAM_ATTR void clearInterrupt() { 
     bankD100Read[0xd1ff & bankOffsetMask] = 0x0;
     REG_WRITE(GPIO_ENABLE1_W1TC_REG, interruptMask);
@@ -139,6 +139,7 @@ IRAM_ATTR void enableSingleBank(int i) {
     bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = 0;
     bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = dataMask | extSel_Mask;
 }
+
 IRAM_ATTR void disableSingleBank(int i) {
     bankEnable[i | BANKSEL_ROM | BANKSEL_RD] = 0;
     bankEnable[i | BANKSEL_RAM | BANKSEL_RD] = 0;
@@ -170,7 +171,6 @@ size_t partition_size = 0x20000;
 const int lfsp_block_sz = 4096;
 extern struct lfs_config cfg;
 
-
 int lfsp_init() { 
     partition = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
@@ -196,9 +196,6 @@ int lfsp_erase_block(const struct lfs_config *c, lfs_block_t block) {
 
 int lsfp_sync(const struct lfs_config *c) { return 0; }
 
-
-
-// configuration of the filesystem is provided by this struct
 struct lfs_config cfg = {
     // block device operations
     .read  = lfsp_read_block,
@@ -232,7 +229,6 @@ int lfs_updateTestFile() {
 }
 #endif
 
-
 DRAM_ATTR static const int psram_sz = 6 * 1024 * 1024;
 DRAM_ATTR uint32_t *psram;
 DRAM_ATTR uint32_t *psram_end;
@@ -242,13 +238,6 @@ DRAM_ATTR static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
 uint32_t lateTsc;
 volatile int dramLoopCount = 0;
-int resetLowCycles = 0;
-int psramLoopCount = 0;
-int lateCount = 0;
-int lateMax = 0, lateMin = 9999, lateIndex = -1;
-int cbCount = 0;
-DRAM_ATTR int stop = false;
-dedic_gpio_bundle_handle_t bundleIn, bundleOut;
 uint32_t lastAddr = -1;
 DRAM_ATTR volatile int cumulativeResets = 0;
 DRAM_ATTR volatile int currentResetValue = 1;
@@ -263,11 +252,6 @@ void iloop_timings2();
 
 
 DRAM_ATTR int maxLoopElapsed, minLoopElapsed, loopElapsedLate = 0;
-
-DRAM_ATTR static bool async_memcpy_callback(async_memcpy_context_t*, async_memcpy_event_t*, void*) {
-    cbCount++;  
-    return false;
-}
 
 inline IRAM_ATTR void busyWaitCCount(uint32_t cycles) { 
     uint32_t tsc = XTHAL_GET_CCOUNT();
@@ -293,44 +277,6 @@ void IRAM_ATTR simulateI2c() {
         tsc = XTHAL_GET_CCOUNT();
         while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
     }
-}
-
-void IRAM_ATTR NEWneopixelWrite(uint8_t pin, uint8_t red_val, uint8_t green_val, uint8_t blue_val) {
-#if 0 
-    //busyWaitCCount(100);
-    //return;       
-    uint32_t stsc;
-    int color[3] = {green_val, red_val, blue_val};
-    int longCycles = 175;
-    int shortCycles = 90;
-    uint32_t bitMask = 1 << (pin - 32); 
-    int i = 0;
-    for (int col = 0; col < 3; col++) {
-        for (int bit = 0; bit < 8; bit++) {
-            if ((color[col] & (1 << (7 - bit)))) {
-                // HIGH bit
-                //REG_WRITE(GPIO_OUT1_W1TS_REG, bitMask);
-                dedic_gpio_cpu_ll_write_all(1);
-                stsc = XTHAL_GET_CCOUNT();
-                while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
-
-                dedic_gpio_cpu_ll_write_all(0);
-                stsc = XTHAL_GET_CCOUNT();
-                while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
-            } else {
-                // LOW bit
-                dedic_gpio_cpu_ll_write_all(1);
-                stsc = XTHAL_GET_CCOUNT();
-                while(XTHAL_GET_CCOUNT() - stsc < shortCycles) {}
-
-                dedic_gpio_cpu_ll_write_all(0);
-                stsc = XTHAL_GET_CCOUNT();
-                while(XTHAL_GET_CCOUNT() - stsc < longCycles) {}
-            }
-            i++;
-        }
-    }
-    #endif
 }
 
 //  socat TCP-LISTEN:9999 - > file.bin
@@ -1084,10 +1030,7 @@ void threadFunc(void *) {
     startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {}
 
-    stop = true;
-//#ifdef FAKE_CLOCK
     REG_SET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_RUNSTALL);
-//#endif
     startTsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {}
     int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
@@ -1099,19 +1042,11 @@ void threadFunc(void *) {
         //__asm__("wsr %0,PS" : : "r"(oldint));
     }
 
-    uint32_t startUsec = micros();
-    while(cbCount < psramLoopCount && micros() - startUsec < 1000000) {
-        delay(50);
-    }
     uint64_t totalEvents = 0;
     for(int i = 0; i < profilers[0].maxBucket; i++)
         totalEvents += profilers[0].buckets[i];
     printf("Total samples %lld implies %.2f sec sampling. Total reads %d\n",
         totalEvents, 1.0 * totalEvents / 1.8 / 1000000, ramReads);
-
-    printf("\n\n\n%.2f lastAddr %04x cb %d late %d lateIndex %d lateMin %d lateMax %d lateTsc %08x %d minLoop %d maxLoop %d jit %d late %d\n", 
-        millis() / 1000.0, lastAddr, cbCount, lateCount, lateIndex, lateMin, lateMax, lateTsc, minLoopE, 
-        maxLoopE, maxLoopE - minLoopE, loopElapsedLate);
 
     if (opt.histogram) {
         vector<string> v; 
@@ -1307,7 +1242,6 @@ void setup() {
 
 #ifdef LOCAL_LFS
     lfsp_init();
-    printf("lfsp_init() complete\n");
     int err = lfs_mount(&lfs, &cfg);
     printf("lfs_mount() returned %d\n", err);
 
@@ -1339,42 +1273,6 @@ void setup() {
             printf("PU   %08x %08x\n", REG_READ(GPIO_IN_REG),REG_READ(GPIO_IN1_REG));
     }
 
-    //vector<int> outputPins = {extSel_Pin, data0Pin};
-    if (opt.logicAnalyzer) { 
-        int bundleA_gpios[] = {clockPin, casInh_pin, extSel_Pin, mpdPin, addr0Pin + 0, addr0Pin + 1, data0Pin + 0, data0Pin + 1};
-        dedic_gpio_bundle_config_t bundleA_config = {
-            .gpio_array = bundleA_gpios,
-            .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
-            .flags = {
-                .in_en = 1,
-                .out_en = 0
-            },
-        };
-        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleIn));
-    } else { 
-        // pbi device - only monitor one pin so we don't have to mask bits after reading dedic_io
-        int bundleA_gpios[] = {clockPin};
-        dedic_gpio_bundle_config_t bundleA_config = {
-            .gpio_array = bundleA_gpios,
-            .array_size = sizeof(bundleA_gpios) / sizeof(bundleA_gpios[0]),
-            .flags = {
-                .in_en = 1,
-                .out_en = 0
-            },
-        };
-        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleA_config, &bundleIn));
-    }
-
-    if (opt.bitResponse) { // can't use direct GPIO_ENABLE or GPIO_OUT registers after setting up dedic_gpio_bundle 
-        int bundleB_gpios[] = {data0Pin, data0Pin + 1, data0Pin + 2, data0Pin + 3, data0Pin + 4, data0Pin + 5, data0Pin + 6, data0Pin + 7};
-        dedic_gpio_bundle_config_t bundleB_config = {
-            .gpio_array = bundleB_gpios,
-            .array_size = sizeof(bundleB_gpios) / sizeof(bundleB_gpios[0]),
-            .flags = { .out_en = 1 },
-        };
-        ESP_ERROR_CHECK(dedic_gpio_new_bundle(&bundleB_config, &bundleOut));
-        REG_WRITE(GPIO_ENABLE1_W1TC_REG, dataMask);                         //    enable DATA lines for output
-    }
     if (opt.fakeClock) { // simulate clock signal 
         pinMode(clockPin, OUTPUT);
         digitalWrite(clockPin, 0);
@@ -1391,11 +1289,9 @@ void setup() {
         //ledcAttachChannel(casInh_pin, testFreq / 2, 1, 4);
         //ledcWrite(casInh_pin, 1);
 
-#if 1
         // write 0xd1ff to address pins to simulate worst-case slowest address decode
         for(int bit = 0; bit < 16; bit ++)  
-            pinMode(addr0Pin + bit, ((0xd1fe >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
-#endif 
+            pinMode(addr0Pin + bit, ((0xd1ff >> bit) & 1) == 1 ? INPUT_PULLUP : INPUT_PULLDOWN);
 
         //gpio_set_drive_capability((gpio_num_t)clockPin, GPIO_DRIVE_CAP_MAX);
         pinMode(mpdPin, INPUT_PULLDOWN);
@@ -1404,14 +1300,14 @@ void setup() {
         pinMode(extSel_Pin, INPUT_PULLUP);
     }
 
-    if (opt.pbiDevice) { 
-        pinMode(extSel_Pin, OUTPUT);
-        digitalWrite(extSel_Pin, 1);
-        pinMode(mpdPin, OUTPUT);
-        digitalWrite(mpdPin, 1);
-        //pinMode(interruptPin, INPUT);
-        //digitalWrite(interruptPin, 1);
-    }
+#if 0
+    pinMode(extSel_Pin, OUTPUT);
+    digitalWrite(extSel_Pin, 1);
+    pinMode(mpdPin, OUTPUT);
+    digitalWrite(mpdPin, 1);
+#endif // #if 0 
+    //pinMode(interruptPin, INPUT);
+    //digitalWrite(interruptPin, 1);
     for(int i = 0; i < 0; i++) { 
         printf("%08x %08x\n", REG_READ(GPIO_IN_REG),REG_READ(GPIO_IN1_REG)); 
     }
