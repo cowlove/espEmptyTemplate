@@ -1447,7 +1447,7 @@ void threadFunc(void *) {
     
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
-    int memReadErrors = (atariRam[0x608] << 24) + (atariRam[0x607] << 16) + (atariRam[0x606] << 16) + atariRam[0x605];
+    int memReadErrors = (atariRam[0x609] << 24) + (atariRam[0x608] << 16) + (atariRam[0x607] << 16) + atariRam[0x606];
     printf("SUMMARY %-10.2f/%.0f e%d i%d d%d %s\n", millis()/1000.0, opt.histRunSec, memReadErrors, 
     pbiInterruptCount, diskReadCount, exitReason.c_str());
     printf("DONE %-10.2f READERR %-8d IO %-8d BUILT " __TIME__ " Exit reason: %s\n", 
