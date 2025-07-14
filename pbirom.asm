@@ -155,12 +155,15 @@ PBI_INIT
     //;ldy GENDEV & $ff
     //;jsr NEWDEV		//; returns: N = 1 - failed, C = 0 - success, C =1 - entry already exists
 
+#define PAGE6_TEST_PROG
+#ifdef PAGE6_TEST_PROG
     ldx #COPY_END-COPY_BEGIN-1
 L1
     lda COPY_BEGIN,x
     sta $0600,x
     dex
     bpl L1
+#endif 
 
     lda PDIMSK  // enable this device's bit in PDIMSK
     // XXX disable interrupts until working
@@ -357,6 +360,7 @@ RESTORE_REGS_AND_RETURN
     pla 
     rts 
 
+#ifdef PAGE6_TEST_PROG
 //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 // Simple test code copied into page 6 by PBI_INIT 
 
@@ -377,6 +381,7 @@ L3
     bpl L2
     rts
 COPY_END
+#endif
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Busy wait in RAM while the PBI ROM is mapped out

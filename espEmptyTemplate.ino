@@ -441,7 +441,7 @@ DRAM_ATTR const char *defaultProgram =
         "41 OPEN #1,8,0,\"J\" \233"
         "42 PUT #1,A + 1 \233"
         "43 CLOSE #1 \233"
-        "50 A=USR(1536) \233"
+        //"50 A=USR(1536) \233"
         "51 PRINT \" -> \"; \233"
         "52 PRINT COUNT; \233"
         "53 COUNT = COUNT + 1 \233"
@@ -927,7 +927,7 @@ void IRAM_ATTR core0Loop() {
         if (1) { // slow loop down to 10ms
             stsc = XTHAL_GET_CCOUNT();
             while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50) { 
-                uint32_t lastWrite = (REG_READ(SYSTEM_CORE_1_CONTROL_1_REG) & addrMask) >> addrShift;
+                uint32_t lastWrite = ((REG_READ(SYSTEM_CORE_1_CONTROL_1_REG) >> dataShift) & addrMask) >> addrShift;
 #ifdef RAM_TEST
                 if (lastWrite == 0x0600) break;
 #endif 

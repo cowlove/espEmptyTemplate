@@ -44,6 +44,10 @@ LOOP1
         sta TESTAREA+$100,x
         sta TESTAREA+$200,x
         sta TESTAREA+$300,x
+        jsr TESTJSR
+        jsr TESTJSR
+        jsr TESTJSR
+        
         clc
         adc #1
         inx
@@ -104,4 +108,7 @@ LOG_ERROR1
     sta ERRCOUNT+3
     pla
     rts
+
+TESTJSR
+    rts 
 

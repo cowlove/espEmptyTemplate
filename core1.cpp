@@ -53,7 +53,7 @@ void IRAM_ATTR iloop_pbi() {
     REG_WRITE(GPIO_OUT1_W1TS_REG, extSel_Mask | mpdMask); 
 
     RAM_VOLATILE uint8_t * const bankD800[2] = { &pbiROM[0], &atariRam[0xd800]};
-    uint32_t lastWriteR0 = 0;
+   // uint32_t lastWriteR0 = 0;
  
     do {    
         while((dedic_gpio_cpu_ll_read_in()) != 0) {}
@@ -103,12 +103,12 @@ void IRAM_ATTR iloop_pbi() {
 
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
             PROFILE2(XTHAL_GET_CCOUNT() - tscFall); 
-            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, lastWriteR0);
+            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, (r0 << dataShift) | data);
             banks[(0xd800 >> bankShift) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect];
             banks[((0xd800 >> bankShift) + 1) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect] + bankSize;
             banks[(0xd800 >> bankShift) + BANKSEL_WR + BANKSEL_RAM] = bankD800[mpdSelect];
             //banks[((0xd800 >> bankShift) + 1) + BANKSEL_WR + BANKSEL_RAM] = bankD800[mpdSelect] + bankSize;
-            while((dedic_gpio_cpu_ll_read_in()) == 0) {}
+            //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
 
             // Timing critical point #4:  All work done by 111 ticks
             PROFILE4(XTHAL_GET_CCOUNT() - tscFall); 
@@ -121,17 +121,18 @@ void IRAM_ATTR iloop_pbi() {
             //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
             //__asm__ __volatile__ ("nop");
             //__asm__ __volatile__ ("nop");
-            lastWriteR0 = r0;
+            uint32_t stage1 = r0 << dataShift;
             banks[(0xd800 >> bankShift) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect];
             banks[((0xd800 >> bankShift) + 1) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect] + bankSize;
             //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
-            while(XTHAL_GET_CCOUNT() - tscFall < 83) {}
+            while(XTHAL_GET_CCOUNT() - tscFall < 75) {}
 
             // Timing critical point #3: Wait at least 80 ticks before reading data lines 
             PROFILE3(XTHAL_GET_CCOUNT() - tscFall); 
             uint32_t r1 = REG_READ(GPIO_IN1_REG); 
             uint8_t data = (r1 >> dataShift);
             *ramAddr = data;
+            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, stage1 | data);
             
             // Timing critical point #4:  All work done by 111 ticks
             PROFILE5(XTHAL_GET_CCOUNT() - tscFall); 
