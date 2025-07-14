@@ -432,16 +432,20 @@ DRAM_ATTR Hist2 profilers[numProfilers];
 DRAM_ATTR int ramReads = 0, ramWrites = 0;
 
 DRAM_ATTR const char *defaultProgram = 
-        "10 REM \233" 
-        "11 OPEN #1,4,0,\"J2:\" \233"
+        "10 A=USR(1546) \233"
+        "11 PRINT A; \233"
+        "12 PRINT \" ->\"; \233"
+        //"13 POKE 1536,1 \233"
+        "14 GOTO 10 \233"
+        "15 OPEN #1,4,0,\"J2:\" \233"
         "20 GET #1,A  \233"
         //"30 PRINT \"   \"; \233"
-        //"35 PRINT A;  \233"
-        "40 CLOSE #1  \233"
+        //"35 PRINT A  \233"
+        "38 CLOSE #1  \233"
+        "40 GOTO 10 \233"
         "41 OPEN #1,8,0,\"J\" \233"
         "42 PUT #1,A + 1 \233"
         "43 CLOSE #1 \233"
-        //"50 A=USR(1536) \233"
         "51 PRINT \" -> \"; \233"
         "52 PRINT COUNT; \233"
         "53 COUNT = COUNT + 1 \233"
@@ -955,10 +959,10 @@ void IRAM_ATTR core0Loop() {
             //    dummyMem[i] = atariRam[0x8000 + i];
             //}
             if (atariRam[1536] != 0 &&
-                atariRam[1537] == 0xde && 
-                atariRam[1538] == 0xad &&
-                atariRam[1539] == 0xbe &&
-                atariRam[1540] == 0xef) {
+                atariRam[1538] == 0xde && 
+                atariRam[1539] == 0xad &&
+                atariRam[1540] == 0xbe &&
+                atariRam[1541] == 0xef) {
                     int cmd = atariRam[1536];
                     if (cmd == 1) { 
                         // remap 
@@ -1137,10 +1141,11 @@ void IRAM_ATTR core0Loop() {
 
             if (elapsedSec == 8 && diskReadCount == 0) {
                 memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
-                addSimKeypress("A=USR(1545)\233");
+                addSimKeypress("A=USR(1546)\233");
             }
 
             if (elapsedSec == 8 && diskReadCount > 0) {
+                memcpy(&atariRam[0x0600], page6Prog, sizeof(page6Prog));
                 addSimKeypress("E.\"J\233");
                 //addSimKeypress("    \233DOS\233     \233DIR D2:\233");
             }
@@ -1149,11 +1154,19 @@ void IRAM_ATTR core0Loop() {
             if (1) { 
                 DRAM_ATTR static int lastReads = 0;
                 DRAM_ATTR static int secondsWithoutRead = 0;
-                if (diskReadCount == lastReads) { 
-                    secondsWithoutRead++;
+                if (1) { 
+                    if (diskReadCount == lastReads) { 
+                        secondsWithoutRead++;
+                    } else { 
+                        secondsWithoutRead = 0;
+                    }
                 } else { 
-                    secondsWithoutRead = 0;
+                    if (atariRam[1537] == 0) { 
+                        secondsWithoutRead++;
+                    }
+                    atariRam[1537] = 0;
                 }
+
                 lastReads = diskReadCount;
                 if (secondsWithoutRead == 5) { 
                     for(int i = 0; i < sizeof(atariRam); i++) { 
@@ -1435,9 +1448,6 @@ void threadFunc(void *) {
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
     int memReadErrors = (atariRam[0x608] << 24) + (atariRam[0x607] << 16) + (atariRam[0x606] << 16) + atariRam[0x605];
-#ifndef RAM_TEST
-    memReadErrors = -1;
-#endif
     printf("SUMMARY %-10.2f/%.0f e%d i%d d%d %s\n", millis()/1000.0, opt.histRunSec, memReadErrors, 
     pbiInterruptCount, diskReadCount, exitReason.c_str());
     printf("DONE %-10.2f READERR %-8d IO %-8d BUILT " __TIME__ " Exit reason: %s\n", 

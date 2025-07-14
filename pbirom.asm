@@ -155,7 +155,7 @@ PBI_INIT
     //;ldy GENDEV & $ff
     //;jsr NEWDEV		//; returns: N = 1 - failed, C = 0 - success, C =1 - entry already exists
 
-#define PAGE6_TEST_PROG
+//#define PAGE6_TEST_PROG
 #ifdef PAGE6_TEST_PROG
     ldx #COPY_END-COPY_BEGIN-1
 L1
@@ -169,6 +169,7 @@ L1
     // XXX disable interrupts until working
     ora #PDEVNUM 
     sta PDIMSK
+    sec
     rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -381,7 +382,7 @@ L3
     bpl L2
     rts
 COPY_END
-#endif
+#endif // PAGE6_TEST_PROG
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Busy wait in RAM while the PBI ROM is mapped out

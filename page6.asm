@@ -4,6 +4,8 @@ TESTAREA = $8000
 SCREENMEM = $9c40
 CMD
 .byt $00
+HEARTBEAT
+.byt $00 
 MAGIC1
 .byt $00
 .byt $00
@@ -47,11 +49,13 @@ LOOP1
         jsr TESTJSR
         jsr TESTJSR
         jsr TESTJSR
-        
+
         clc
         adc #1
         inx
         bne LOOP2
+
+    inc HEARTBEAT
 
     // x, a: wrapped back to starting point for next loop
     LOOP3 // compare pattern, should appear in remapped pages 
@@ -84,8 +88,9 @@ LOOP1
     clc
     adc #1
     sta SCREENMEM
-    jmp LOOP2
-    
+//    jmp LOOP2
+    rts
+
 LOG_ERROR1
     pha
 
@@ -109,6 +114,19 @@ LOG_ERROR1
     pla
     rts
 
+
+// test sequence of rapid jsr instructions to stress the double-writes of the stack pushes 
 TESTJSR
+    jsr TESTJSR1
     rts 
 
+TESTJSR1
+    jsr TESTJSR2
+    rts 
+
+TESTJSR2
+    jsr TESTJSR3
+    rts 
+
+TESTJSR3
+    rts 
