@@ -796,12 +796,12 @@ void IRAM_ATTR core0Loop() {
     uint32_t prerollBuffer[prerollBufferSize]; 
     uint32_t prerollIndex = 0;
 
-    BmonTrigger bmonTriggers[] = {
+    const vector<BmonTrigger> bmonTriggers = {
         { 
             .mask = (readWriteMask | addrMask) << bmonR0Shift, 
             .value = (readWriteMask | (0x0611 << addrShift)) << bmonR0Shift,
             .depth = 40,
-            .preroll = 6,
+            .preroll = 4,
             .count = 1000000,
             .skip = 0 // TODO - doesn't work? 
         },
@@ -830,9 +830,7 @@ void IRAM_ATTR core0Loop() {
                 if (psramPtr == psram_end) 
                     psramPtr = psram; 
             } else { 
-                //for(auto t : bmonTriggers) {
-                BmonTrigger &t = bmonTriggers[0];
-                {
+                for(auto t : bmonTriggers) {
                     if (t.count > 0 && (bmon & t.mask) == t.value) {
                         if (t.skip > 0) { 
                             t.skip--;
@@ -854,10 +852,12 @@ void IRAM_ATTR core0Loop() {
                             psramPtr++;
                             if (psramPtr == psram_end) 
                                 psramPtr = psram;
-                            continue; // TODO: exit out of while() loop, not the auto t: bmonTriggers loop 
+                            break;
                         }
                     }
                 }
+                if (bmonCaptureDepth > 0)
+                    continue;
             }
             prerollBuffer[prerollIndex] = bmon;
             prerollIndex = (prerollIndex + 1) & (prerollBufferSize - 1); 
