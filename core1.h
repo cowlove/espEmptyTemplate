@@ -67,7 +67,7 @@ static const struct {
    float histRunSec   = TEST_SEC;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 7200;
+   float histRunSec   = 60;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -75,7 +75,7 @@ static const struct {
    bool timingTest    = 0;
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including 
-   bool dumpPsram     = 1;
+   int dumpPsram      = 2000;
    bool forceMemTest  = 0;
    bool tcpSendPsram  = 0;
    bool histogram     = 1;
@@ -141,14 +141,15 @@ static const uint32_t copyDataMask = 0xff << copyDataShift;
 // TODO: extend this generally, need to review which ESP32 pins are driven during boot or have strapping resistors   
 // TODO: can we move all the address lines down by one pin to allow R/W to be the newest high
 //    bit in a bigger bank index?
-//                               +--Clock
-//                               | +---Refresh
-//                               | | +--- ADDR                               +-- CasInhAL
-//                               | | |                                       |  +-- Read                    +--MPD out
-//                               | | |                                       |  |   +---DATA                |  +-- ext sel out 
-//                               | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |  
 using std::vector;
-static const vector<int> pins = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47,48};
+static const vector<int> pins = {
+// +--Clock
+// | +---Refresh
+// | | +--- ADDR                               +-- CasInhAL
+// | | |                                       |  +-- Read                    +--MPD out
+// | | |                                       |  |   +---DATA                |  +-- ext sel out 
+// | | + + + + + + + + +  +  +  +  +  +  +  +  |  |   |  +  +  +  +  +  +  +  |  |   +- Interrupt out 
+   0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21, 38,39,40,41,42,43,44,45,46,47,48};
 //static const int led_NO_Pin = -1;
 
 static const int bankBits = 8;

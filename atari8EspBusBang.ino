@@ -771,22 +771,16 @@ void IRAM_ATTR core0Loop() {
     uint32_t prerollBuffer[prerollBufferSize]; 
     uint32_t prerollIndex = 0;
 
-    vector<BmonTrigger> bmonTriggers;
-    BmonTrigger t = { 
-        .mask = (readWriteMask | addrMask) << bmonR0Shift, 
-        .value = (readWriteMask | (0x0611 << addrShift)) << bmonR0Shift,
-        .depth = 10,
-        .preroll = 10,
-        .count = 1,
-        .skip = 0
+    const vector<BmonTrigger> bmonTriggers = {
+        { 
+            .mask = (readWriteMask | addrMask) << bmonR0Shift, 
+            .value = (readWriteMask | (0x0611 << addrShift)) << bmonR0Shift,
+            .depth = 40,
+            .preroll = 4,
+            .count = 1000000,
+            .skip = 0 // TODO - doesn't work? 
+        },
     };
-    bmonTriggers.push_back(t);
-
-    //uint32_t bmonTriggerMask = (readWriteMask | addrMask) << bmonR0Shift;
-    //uint32_t bmonTriggerValue = (readWriteMask | (0x0611 << addrShift)) << bmonR0Shift;
-    //int bmonTriggerPreroll = 10;
-    //int bmonTriggerCount = 10000000;
-
 
     while(1) {
         uint32_t stsc = XTHAL_GET_CCOUNT();
@@ -796,49 +790,57 @@ void IRAM_ATTR core0Loop() {
             while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50 && 
                 (bmon = REG_READ(SYSTEM_CORE_1_CONTROL_1_REG)) == lastBmon) {}
 
-            if (bmon != lastBmon) { 
-                lastBmon = bmon;
-                uint32_t r0 = bmon >> bmonR0Shift;
+            bmon = bmon & 0x2fffffff;    
+            uint32_t r0 = bmon >> bmonR0Shift;
+            if (bmon == lastBmon || (r0 & refreshMask) == 0) 
+                continue;
 
-                if ((r0 & refreshMask) != 0) {
-                    for(auto t : bmonTriggers) {
-                        if (t.count > 0 && (bmon & t.mask) == t.value) {
-                            if (t.skip > 0) { 
-                                t.skip--;
-                            } else { 
-                                bmonCaptureDepth = t.depth;
-                                t.count--;
-                                for(int i = min(prerollBufferSize, t.preroll) - 1; i >= 0; i--) { 
-                                    // Compute backIdx as prerollIndex - i;
-                                    int backIdx = (prerollIndex + (prerollBufferSize - i)) & (prerollBufferSize - 1);
-                                    *psramPtr = prerollBuffer[backIdx];
-                                    psramPtr++;
-                                    if (psramPtr == psram_end) 
-                                        psramPtr = psram; 
-                                }
+            lastBmon = bmon;
+
+            if (bmonCaptureDepth > 0) {
+                bmonCaptureDepth--;
+                *psramPtr = bmon;
+                psramPtr++;
+                if (psramPtr == psram_end) 
+                    psramPtr = psram; 
+            } else { 
+                for(auto t : bmonTriggers) {
+                    if (t.count > 0 && (bmon & t.mask) == t.value) {
+                        if (t.skip > 0) { 
+                            t.skip--;
+                        } else {
+                            bmonCaptureDepth = t.depth;
+                            t.count--;
+
+                            for(int i = min(prerollBufferSize, t.preroll) - 1; i >= 0; i--) { 
+                                // Compute backIdx as prerollIndex - i;
+                                int backIdx = (prerollIndex + (prerollBufferSize - i)) & (prerollBufferSize - 1);
+                                *psramPtr = prerollBuffer[backIdx];
+                                psramPtr++;
+                                if (psramPtr == psram_end) 
+                                    psramPtr = psram; 
                             }
+
+                            bmon |= 0x80000000; 
+                            *psramPtr = bmon;
+                            psramPtr++;
+                            if (psramPtr == psram_end) 
+                                psramPtr = psram; 
                         }
                     }
-                    if (bmonCaptureDepth > 0 && (r0 & refreshMask) != 0) {
-                        bmonCaptureDepth--;
-                        *psramPtr = bmon;
-                        psramPtr++;
-                        if (psramPtr == psram_end) 
-                            psramPtr = psram; 
-                    }
-                    prerollBuffer[prerollIndex] = bmon;
-                    prerollIndex = (prerollIndex + 1) & (prerollBufferSize - 1); 
                 }
-
-                if ((r0 & readWriteMask) == 0) {
-                    uint32_t lastWrite = (r0 & addrMask) >> addrShift;
-                    if (lastWrite == 0x0600) break;
-                    if (lastWrite == 0xd830) break;
-                    if (lastWrite == 0xd820) break;
-                    if (lastWrite == PDIMSK) break;
-                }
+            }
+            prerollBuffer[prerollIndex] = bmon;
+            prerollIndex = (prerollIndex + 1) & (prerollBufferSize - 1); 
+            if ((r0 & readWriteMask) == 0) {
+                uint32_t lastWrite = (r0 & addrMask) >> addrShift;
+                if (lastWrite == 0x0600) break;
+                if (lastWrite == 0xd830) break;
+                if (lastWrite == 0xd820) break;
+                if (lastWrite == PDIMSK) break;
             }    
         }
+
 
         if (deferredInterrupt && (atariRam[PDIMSK] & pdiDeviceNum) == pdiDeviceNum)
             raiseInterrupt();
@@ -1094,7 +1096,7 @@ void threadFunc(void *) {
         while(!sendPsramTcp((char *)psram, psram_sz)) delay(1000);
     }
     if (opt.dumpPsram) { 
-        for(uint32_t *p = psram; p < psram + 200; p++) {
+        for(uint32_t *p = psram; p < psram + min(opt.dumpPsram, psram_end - psram); p++) {
             //printf("P %08X\n",*p);
             //if ((*p & copyResetMask) && !(*p &casInh_Mask))
             //if ((*p & copyResetMask) != 0)
