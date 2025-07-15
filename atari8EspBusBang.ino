@@ -244,39 +244,15 @@ DRAM_ATTR volatile int currentResetValue = 1;
 
 DRAM_ATTR volatile int core1Reg = 0;
 
-DRAM_ATTR volatile double avgNs1, avgNs2, avgTicks1, avgTicks2;
-DRAM_ATTR int maxElapsed1 = 0, maxElapsed2 = 0;
-DRAM_ATTR int maxElapsedIndex1 = 0;
-void iloop_timings1();
-void iloop_timings2();
 
-
-DRAM_ATTR int maxLoopElapsed, minLoopElapsed, loopElapsedLate = 0;
-
-inline IRAM_ATTR void busyWaitCCount(uint32_t cycles) { 
+inline IRAM_ATTR void busyWaitTicks(uint32_t cycles) { 
     uint32_t tsc = XTHAL_GET_CCOUNT();
     while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
 }
 
 inline IRAM_ATTR void busywait(float sec) {
     uint32_t tsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - tsc < sec * 240 * 1000000) {};
-}
-
-
-
-
-void IRAM_ATTR simulateI2c() {
-    int cycles = 240 * 1000000 / 100000 / 2;
-    uint32_t tsc;
-    for(int i = 0; i < 32; i++) { 
-        dedic_gpio_cpu_ll_write_all(1);
-        tsc = XTHAL_GET_CCOUNT();
-        while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
-        dedic_gpio_cpu_ll_write_all(0);
-        tsc = XTHAL_GET_CCOUNT();
-        while(XTHAL_GET_CCOUNT() - tsc < cycles) {};
-    }
+    busyWaitTicks(sec * 240 * 1000000);
 }
 
 //  socat TCP-LISTEN:9999 - > file.bin
@@ -320,21 +296,6 @@ bool sendPsramTcp(const char *buf, int len, bool resetWdt = false) {
 #endif
     return true;
 }
-
-#if 0 
-struct Hist2 { 
-    static const int maxBucket = 512; // must be power of 2
-    int buckets[maxBucket];
-    inline void add(uint32_t x) { buckets[x & (maxBucket - 1)]++; }
-    Hist2() { clear(); }
-    int64_t count() {
-        int64_t sum = 0; 
-        for(int i = 0; i < maxBucket; i++) sum += buckets[i];
-        return sum;
-    }
-    void clear() { for(int i = 0; i < maxBucket; i++) buckets[i] = 0; }
-};
-#endif
 
 struct AtariIOCB { 
     uint8_t ICHID,  // handler 
@@ -1021,20 +982,16 @@ void threadFunc(void *) {
         //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
     }
     int lastCycleCount = 0;
-    uint32_t startTsc = XTHAL_GET_CCOUNT();
     int fakeRamErrCount = opt.forceMemTest ? 2 : 0;
     uint8_t lastRamValue = 0;
 
     core0Loop();
     disableBus();
-    startTsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {}
 
+    busywait(.001);
     REG_SET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_RUNSTALL);
-    startTsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {}
-    int maxLoopE = (volatile int)maxLoopElapsed, minLoopE = (volatile int)minLoopElapsed;
-
+    busywait(.001);
+    
     if (opt.maskCore0Int) { 
         enableCore0WDT();
         portENABLE_INTERRUPTS();
@@ -1300,14 +1257,6 @@ void setup() {
         pinMode(extSel_Pin, INPUT_PULLUP);
     }
 
-#if 0
-    pinMode(extSel_Pin, OUTPUT);
-    digitalWrite(extSel_Pin, 1);
-    pinMode(mpdPin, OUTPUT);
-    digitalWrite(mpdPin, 1);
-#endif // #if 0 
-    //pinMode(interruptPin, INPUT);
-    //digitalWrite(interruptPin, 1);
     for(int i = 0; i < 0; i++) { 
         printf("%08x %08x\n", REG_READ(GPIO_IN_REG),REG_READ(GPIO_IN1_REG)); 
     }
@@ -1316,13 +1265,10 @@ void setup() {
         testFreq / 1000000.0, lateThresholdTicks, halfCycleTicks, clockMask);
 
     startCpu1();
-    uint32_t startTsc = XTHAL_GET_CCOUNT();
-    while(XTHAL_GET_CCOUNT() - startTsc < 240 * 1000) {};
+    busywait(.001);
     //threadFunc(NULL);
     xTaskCreatePinnedToCore(threadFunc, "th", 4 * 1024, NULL, 0, NULL, 0);
     while(1) { yield(); delay(1000); };
-
-    //while(XTHAL_GET_CCOUNT() - startTsc < 120 * 1000000) {}
 }
         
 void loop() {
