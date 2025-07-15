@@ -158,6 +158,15 @@ IRAM_ATTR void disableBus() {
 
 std::string vsfmt(const char *format, va_list args);
 std::string sfmt(const char *format, ...);
+class LineBuffer {
+public:
+        char line[1024];
+        char len = 0;
+        int add(char c, std::function<void(const char *)> f = NULL);
+        void add(const char *b, int n, std::function<void(const char *)> f);
+        void add(const uint8_t *b, int n, std::function<void(const char *)> f);
+};
+
 
 const esp_partition_t *partition;
 #define LOCAL_LFS
@@ -353,7 +362,8 @@ DRAM_ATTR const char *defaultProgram =
 
 DRAM_ATTR vector<uint8_t> simulatedKeypressQueue;
 DRAM_ATTR int simulatedKeysAvailable = 0;
-IRAM_ATTR void addSimKeypress(const char c) {
+IRAM_ATTR void addSimKeypress(char c) {
+    if (c == '\n') c = '\233';
     simulatedKeypressQueue.push_back(c);
     simulatedKeysAvailable = 1;
 }
@@ -580,6 +590,21 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
         portDISABLE_INTERRUPTS();
         disableCore0WDT();
     }
+    while(Serial.available()) { 
+        enableCore0WDT();
+        portENABLE_INTERRUPTS();
+        static LineBuffer lb;
+        lb.add(Serial.read(), [](const char *line) {
+            char c; 
+            if (sscanf(line, "key %c", &c) == 1) {
+                printf("keypress key '%c'\n", c);
+                addSimKeypress(c);
+            }
+        });
+        fflush(stdout);
+        portDISABLE_INTERRUPTS();
+        disableCore0WDT();
+    }
 #endif // #ifdef BUS_DETACH
     AtariIOCB *iocb = (AtariIOCB *)&atariRam[AtariDef.IOCB0 + pbiRequest->x]; // todo validate x bounds
     //pbiRequest->y = 1; // assume success
@@ -771,12 +796,12 @@ void IRAM_ATTR core0Loop() {
     uint32_t prerollBuffer[prerollBufferSize]; 
     uint32_t prerollIndex = 0;
 
-    const vector<BmonTrigger> bmonTriggers = {
+    BmonTrigger bmonTriggers[] = {
         { 
             .mask = (readWriteMask | addrMask) << bmonR0Shift, 
             .value = (readWriteMask | (0x0611 << addrShift)) << bmonR0Shift,
             .depth = 40,
-            .preroll = 4,
+            .preroll = 6,
             .count = 1000000,
             .skip = 0 // TODO - doesn't work? 
         },
@@ -787,7 +812,8 @@ void IRAM_ATTR core0Loop() {
         stsc = XTHAL_GET_CCOUNT();
         uint32_t bmon = 0;
         while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50) {  
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50 && 
+            while(
+                //XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50 && 
                 (bmon = REG_READ(SYSTEM_CORE_1_CONTROL_1_REG)) == lastBmon) {}
 
             bmon = bmon & 0x2fffffff;    
@@ -804,7 +830,9 @@ void IRAM_ATTR core0Loop() {
                 if (psramPtr == psram_end) 
                     psramPtr = psram; 
             } else { 
-                for(auto t : bmonTriggers) {
+                //for(auto t : bmonTriggers) {
+                BmonTrigger &t = bmonTriggers[0];
+                {
                     if (t.count > 0 && (bmon & t.mask) == t.value) {
                         if (t.skip > 0) { 
                             t.skip--;
@@ -825,7 +853,8 @@ void IRAM_ATTR core0Loop() {
                             *psramPtr = bmon;
                             psramPtr++;
                             if (psramPtr == psram_end) 
-                                psramPtr = psram; 
+                                psramPtr = psram;
+                            continue; // TODO: exit out of while() loop, not the auto t: bmonTriggers loop 
                         }
                     }
                 }
@@ -916,11 +945,9 @@ void IRAM_ATTR core0Loop() {
 #endif 
 
 #ifdef SIM_KEYPRESS
-        if (elapsedSec < 30) { 
-            static uint32_t lastTsc;
+        { // TODO:  EVERYN_TICKS macro broken, needs its own scope. 
             static const int keyMs = 150;
-            EVERYN_TICKS(240 * 1000 * keyMs) {
-                lastTsc = XTHAL_GET_CCOUNT();
+            EVERYN_TICKS(240 * 1000 * keyMs) { 
                 if (simulatedKeysAvailable && simulatedKeypressQueue.size() > 0) { 
                     uint8_t c = simulatedKeypressQueue[0];
                     simulatedKeypressQueue.erase(simulatedKeypressQueue.begin());
@@ -998,7 +1025,7 @@ void IRAM_ATTR core0Loop() {
                 exitReason = "0 Specified run time reached";   
                 break;
             }
-            if(atariRam[754] == 23) {
+            if(atariRam[754] == 23 || atariRam[764] == 23) {
                 exitReason = "1 Z key pressed";
                 break;
             }
@@ -1413,6 +1440,20 @@ std::string sfmt(const char *format, ...) {
         return rval;
 }
 
+int LineBuffer::add(char c, std::function<void(const char *)> f/* = NULL*/) {
+        int r = 0;
+        if (c != '\r' && c != '\n')
+                line[len++] = c; 
+        if (len >= sizeof(line) - 1 || c == '\n') {
+                r = len;
+                line[len] = 0;
+                len = 0;
+                if (f != NULL) { 
+                        f(line);
+                }
+        }
+        return r;
+}
 
 #if 0 
 CONFIG_SOC_WDT_SUPPORTED=n
