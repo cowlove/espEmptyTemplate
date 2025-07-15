@@ -750,48 +750,96 @@ DRAM_ATTR static uint8_t dummyMem[0x400];
 void IRAM_ATTR core0Loop() { 
 
     enableBus();
-
+    uint32_t *psramPtr = psram;
 #ifdef RAM_TEST
     // disable PBI ROM by corrupting it 
     pbiROM[0x03] = 0xff;
 #endif
 
+    uint32_t lastBmon = 0;
+    int bmonCaptureDepth = 0;
+    struct BmonTrigger { 
+        uint32_t mask;
+        uint32_t value;
+        int depth;
+        int preroll;
+        int count;
+        int skip;
+    };
+
+    const int prerollBufferSize = 64; // must be power of 2
+    uint32_t prerollBuffer[prerollBufferSize]; 
+    uint32_t prerollIndex = 0;
+
+    vector<BmonTrigger> bmonTriggers;
+    BmonTrigger t = { 
+        .mask = (readWriteMask | addrMask) << bmonR0Shift, 
+        .value = (readWriteMask | (0x0611 << addrShift)) << bmonR0Shift,
+        .depth = 10,
+        .preroll = 10,
+        .count = 1,
+        .skip = 0
+    };
+    bmonTriggers.push_back(t);
+
+    //uint32_t bmonTriggerMask = (readWriteMask | addrMask) << bmonR0Shift;
+    //uint32_t bmonTriggerValue = (readWriteMask | (0x0611 << addrShift)) << bmonR0Shift;
+    //int bmonTriggerPreroll = 10;
+    //int bmonTriggerCount = 10000000;
+
+
     while(1) {
         uint32_t stsc = XTHAL_GET_CCOUNT();
-        if (0) {
-            static const int tbSize = 128;
-            uint32_t *traceBuf =(uint32_t *) heap_caps_aligned_alloc(64, tbSize * 4,  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-            uint32_t *tbPtr = traceBuf;
-            uint32_t r0, lastR0 = 0;
-            int runSec = 5;
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000000 * 1) {}
-            for(int i = 0; i < numProfilers; i++) profilers[i].clear();
-            
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000000 * runSec && tbPtr <= traceBuf + tbSize) {
-                do { 
-                    r0 = REG_READ(SYSTEM_CORE_1_CONTROL_1_REG);
-                } while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000000 * runSec && r0 == lastR0);  
-                lastR0 = r0;
-                *tbPtr = 40;
-                //tbPtr++;
-            }
-            break;
+        stsc = XTHAL_GET_CCOUNT();
+        uint32_t bmon = 0;
+        while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50) {  
+            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50 && 
+                (bmon = REG_READ(SYSTEM_CORE_1_CONTROL_1_REG)) == lastBmon) {}
+
+            if (bmon != lastBmon) { 
+                lastBmon = bmon;
+                uint32_t r0 = bmon >> bmonR0Shift;
+
+                if ((r0 & refreshMask) != 0) {
+                    for(auto t : bmonTriggers) {
+                        if (t.count > 0 && (bmon & t.mask) == t.value) {
+                            if (t.skip > 0) { 
+                                t.skip--;
+                            } else { 
+                                bmonCaptureDepth = t.depth;
+                                t.count--;
+                                for(int i = min(prerollBufferSize, t.preroll) - 1; i >= 0; i--) { 
+                                    // Compute backIdx as prerollIndex - i;
+                                    int backIdx = (prerollIndex + (prerollBufferSize - i)) & (prerollBufferSize - 1);
+                                    *psramPtr = prerollBuffer[backIdx];
+                                    psramPtr++;
+                                    if (psramPtr == psram_end) 
+                                        psramPtr = psram; 
+                                }
+                            }
+                        }
+                    }
+                    if (bmonCaptureDepth > 0 && (r0 & refreshMask) != 0) {
+                        bmonCaptureDepth--;
+                        *psramPtr = bmon;
+                        psramPtr++;
+                        if (psramPtr == psram_end) 
+                            psramPtr = psram; 
+                    }
+                    prerollBuffer[prerollIndex] = bmon;
+                    prerollIndex = (prerollIndex + 1) & (prerollBufferSize - 1); 
+                }
+
+                if ((r0 & readWriteMask) == 0) {
+                    uint32_t lastWrite = (r0 & addrMask) >> addrShift;
+                    if (lastWrite == 0x0600) break;
+                    if (lastWrite == 0xd830) break;
+                    if (lastWrite == 0xd820) break;
+                    if (lastWrite == PDIMSK) break;
+                }
+            }    
         }
-        if (1) { // slow loop down to 10ms
-            stsc = XTHAL_GET_CCOUNT();
-            while(XTHAL_GET_CCOUNT() - stsc < 240 * 1000 * 50) { 
-                uint32_t lastWrite = ((REG_READ(SYSTEM_CORE_1_CONTROL_1_REG) >> dataShift) & addrMask) >> addrShift;
-#ifdef RAM_TEST
-                if (lastWrite == 0x0600) break;
-#endif 
-                if (lastWrite == 0xd830) break;
-                if (lastWrite == 0xd820) break;
-                if (lastWrite == PDIMSK) break;
-                __asm__ __volatile__ ("nop");
-                __asm__ __volatile__ ("nop");
-                __asm__ __volatile__ ("nop");
-            }
-        }
+
         if (deferredInterrupt && (atariRam[PDIMSK] & pdiDeviceNum) == pdiDeviceNum)
             raiseInterrupt();
 
@@ -804,9 +852,6 @@ void IRAM_ATTR core0Loop() {
         }
 
         if (1) { // XXMEMTEST
-            //for(int i = 0; i < sizeof(dummyMem); i++) {
-            //    dummyMem[i] = atariRam[0x8000 + i];
-            //}
             if (atariRam[1536] != 0 &&
                 atariRam[1538] == 0xde && 
                 atariRam[1539] == 0xad &&
@@ -972,12 +1017,11 @@ void threadFunc(void *) {
 
     XT_INTEXC_HOOK oldnmi = _xt_intexc_hooks[XCHAL_NMILEVEL];
     uint32_t oldint;
-    if (opt.maskCore0Int) { 
-        portDISABLE_INTERRUPTS();
-        disableCore0WDT();
-        _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
-        //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
-    }
+
+    portDISABLE_INTERRUPTS();
+    disableCore0WDT();
+    _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
+    //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
 
     core0Loop();
     disableBus();
@@ -986,12 +1030,10 @@ void threadFunc(void *) {
     REG_SET_BIT(SYSTEM_CORE_1_CONTROL_0_REG, SYSTEM_CONTROL_CORE_1_RUNSTALL);
     busywait(.001);
     
-    if (opt.maskCore0Int) { 
-        enableCore0WDT();
-        portENABLE_INTERRUPTS();
-        _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi;
-        //__asm__("wsr %0,PS" : : "r"(oldint));
-    }
+    enableCore0WDT();
+    portENABLE_INTERRUPTS();
+    _xt_intexc_hooks[XCHAL_NMILEVEL] = oldnmi;
+    //__asm__("wsr %0,PS" : : "r"(oldint));
 
     uint64_t totalEvents = 0;
     for(int i = 0; i < profilers[0].maxBucket; i++)
@@ -1052,12 +1094,12 @@ void threadFunc(void *) {
         while(!sendPsramTcp((char *)psram, psram_sz)) delay(1000);
     }
     if (opt.dumpPsram) { 
-        for(uint32_t *p = psram; p < psram_end; p++) {
+        for(uint32_t *p = psram; p < psram + 200; p++) {
             //printf("P %08X\n",*p);
             //if ((*p & copyResetMask) && !(*p &casInh_Mask))
             //if ((*p & copyResetMask) != 0)
             //s += sfmt("%08x\n", *p);
-            if (1) { 
+            if (0) { 
                 //if ((*p & copyResetMask) != 0)
                 printf("P%08x %08x %04x %02x MPD%d C%d RW%d\n", 
                     (int)(p - psram), *p, (*p & addrMask) >> addrShift,
@@ -1066,6 +1108,13 @@ void threadFunc(void *) {
                     (*p & casInh_Mask) != 0,
                     (*p & readWriteMask) != 0);
                 //printf("P %08X %08X\n", p - psram, *p);
+            }
+            if (1) {
+                uint32_t r0 = ((*p) >> 8);
+                uint16_t addr = r0 >> addrShift;
+                char rw = (r0 & readWriteMask) != 0 ? 'R' : 'W';
+                uint8_t data = (*p & 0xff);
+                printf("P %08x %c %04x %02x\n", *p, rw, addr, data); 
             }
             //if (p > psram + 1000) break;
             //wdtReset();
@@ -1117,14 +1166,6 @@ void threadFunc(void *) {
 
     printf("\n0xd1ff: %02x\n", atariRam[0xd1ff]);
     printf("0xd820: %02x\n", atariRam[0xd820]);
-#ifdef BUS_MONITOR
-    printf("Bus Monitor:\n");
-    for(int i = 0; i < sizeof(atariRam); i++) { 
-        if (psram[i] != 0 && (i < 0x100 || i > 0x1ff)) {
-            printf("%05d %04x %10d      BMON\n", i, i, psram[i]);
-        }
-    }  
-#endif 
     //printf("busMask: %08x bus is %s\n", busMask, (busMask & dataMask) == dataMask ? "ENABLED" : "DISABLED");
     
     printf("Minimum free ram: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));

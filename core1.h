@@ -67,7 +67,7 @@ static const struct {
    float histRunSec   = TEST_SEC;
 #else 
    bool fakeClock     = 0;
-   float histRunSec   = 300;
+   float histRunSec   = 7200;
 #endif 
    bool testPins      = 0;
    bool watchPins     = 0;      // loop forever printing pin values w/ INPUT_PULLUP
@@ -75,24 +75,10 @@ static const struct {
    bool timingTest    = 0;
    bool bitResponse   = 0;
    bool core0Led      = 0; // broken, PBI loop overwrites entire OUT1 register including 
-   bool dumpPsram     = 0;
+   bool dumpPsram     = 1;
    bool forceMemTest  = 0;
-#define PBI_DEVICE
-#ifdef PBI_DEVICE
-   bool logicAnalyzer = 0;
-   bool maskCore0Int  = 1;
-   bool busAnalyzer   = 0;
    bool tcpSendPsram  = 0;
    bool histogram     = 1;
-   bool pbiDevice     = 1;
-#else
-   bool logicAnalyzer = 0;
-   bool pbiDevice     = 0;
-   bool maskCore0Int  = 0;
-   bool busAnalyzer   = 1;
-   bool tcpSendPsram  = 1;
-   bool histogram     = 0;
-#endif
 } opt;
 
 struct Pin {
@@ -257,3 +243,5 @@ struct BusMonitor {
 extern DRAM_ATTR BusMonitor busMon;
 
 static const int pdiDeviceNum = 1;
+
+static const int bmonR0Shift = 8;

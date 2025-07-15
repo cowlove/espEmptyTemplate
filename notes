@@ -671,3 +671,27 @@ Came home at work, 9b7450 hung at 17000 iterations
 # to use the idf enviornment configuration stuff 
 python3 esp-idf/tools/activate.py 
 esp-idf/tools/idf.py menuconfig
+
+Working on bmon and preroll:
+P 24182a68 R 060a 68
+P 24182ea9 R 060b a9
+P 2407e2b4 R 01f8 b4
+P 2407e600 R 01f9 00
+P 24182ea9 R 060b a9
+P 241832de R 060c de
+P 2418368d R 060d 8d
+P 24183a02 R 060e 02
+P 24183e06 R 060f 06
+P 04180ade W 0602 de
+P 241842a9 R 0610 a9
+P 241846ad R 0611 ad
+P 24184a8d R 0612 8d
+P 24184e03 R 0613 03
+P 24185206 R 0614 06
+P 04180ead W 0603 ad
+P 241856a9 R 0615 a9
+P 24185abe R 0616 be
+P 24185e8d R 0617 8d
+P 24186204 R 0618 04
+P 24186606 R 0619 06
+P 041812be W 0604 be

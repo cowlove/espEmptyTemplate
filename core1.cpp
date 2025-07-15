@@ -103,7 +103,7 @@ void IRAM_ATTR iloop_pbi() {
 
             // Timing critical point #2 - REG_WRITE completed by 85 ticks
             PROFILE2(XTHAL_GET_CCOUNT() - tscFall); 
-            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, (r0 << dataShift) | data);
+            REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, (r0 << bmonR0Shift) | data);
             banks[(0xd800 >> bankShift) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect];
             banks[((0xd800 >> bankShift) + 1) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect] + bankSize;
             banks[(0xd800 >> bankShift) + BANKSEL_WR + BANKSEL_RAM] = bankD800[mpdSelect];
@@ -121,7 +121,7 @@ void IRAM_ATTR iloop_pbi() {
             //while((dedic_gpio_cpu_ll_read_in()) == 0) {}
             //__asm__ __volatile__ ("nop");
             //__asm__ __volatile__ ("nop");
-            uint32_t stage1 = r0 << dataShift;
+            uint32_t stage1 = r0 << bmonR0Shift;
             banks[(0xd800 >> bankShift) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect];
             banks[((0xd800 >> bankShift) + 1) + BANKSEL_RD + BANKSEL_RAM] = bankD800[mpdSelect] + bankSize;
             //REG_WRITE(SYSTEM_CORE_1_CONTROL_1_REG, r0); // 6-7 cycles
