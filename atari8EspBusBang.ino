@@ -236,14 +236,6 @@ DRAM_ATTR uint32_t *psram_end;
 DRAM_ATTR static const int testFreq = 1.8 * 1000000;//1000000;
 DRAM_ATTR static const int lateThresholdTicks = 180 * 2 * 1000000 / testFreq;
 static const uint32_t halfCycleTicks = 240 * 1000000 / testFreq / 2;
-uint32_t lateTsc;
-volatile int dramLoopCount = 0;
-uint32_t lastAddr = -1;
-DRAM_ATTR volatile int cumulativeResets = 0;
-DRAM_ATTR volatile int currentResetValue = 1;
-
-DRAM_ATTR volatile int core1Reg = 0;
-
 
 inline IRAM_ATTR void busyWaitTicks(uint32_t cycles) { 
     uint32_t tsc = XTHAL_GET_CCOUNT();
@@ -314,7 +306,7 @@ struct AtariIOCB {
             ICAX4,
             ICAX5,
             ICAX6;
-    };
+};
 
 DRAM_ATTR const struct AtariDefStruct {
     int IOCB0 = 0x340;
@@ -357,7 +349,7 @@ DRAM_ATTR const char *defaultProgram =
         "70 GOTO 10 \233"
         "RUN\233"
         ;
-;
+
 
 DRAM_ATTR vector<uint8_t> simulatedKeypressQueue;
 DRAM_ATTR int simulatedKeysAvailable = 0;
@@ -541,6 +533,16 @@ DRAM_ATTR DiskImage atariDisks[8] =  {
 DRAM_ATTR int diskReadCount = 0, pbiInterruptCount = 0, memWriteErrors = 0;
 DRAM_ATTR string exitReason = "";
 DRAM_ATTR int elapsedSec = 0;
+
+#define EVERYN_TICKS(ticks) \
+    DRAM_ATTR static uint32_t lastTsc ## __LINE__ = XTHAL_GET_CCOUNT(); \
+    const uint32_t tsc ## __LINE__ = XTHAL_GET_CCOUNT(); \
+    bool doLoop ## __LINE__ = false; \
+    if(tsc ## __LINE__ - lastTsc ## __LINE__ > ticks) {\
+        lastTsc ## __LINE__ = tsc ## __LINE__; \
+        doLoop ## __LINE__ = true; \
+    } \
+    if (doLoop ## __LINE__)
 
 void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) { 
     // TMP: put the shortest, quickest interrupt service possible
@@ -746,10 +748,6 @@ void IRAM_ATTR handlePbiRequest(PbiIocb *pbiRequest) {
 DRAM_ATTR static uint8_t dummyMem[0x400];
 
 void IRAM_ATTR core0Loop() { 
-    int pi = 0;
-    uint32_t lastCycleCount, startTsc = XTHAL_GET_CCOUNT();
-    uint8_t ledColor[3] = {0,0,0};
-    uint32_t *psramPtr = psram;
 
     enableBus();
 
@@ -874,7 +872,7 @@ void IRAM_ATTR core0Loop() {
         if (elapsedSec < 30) { 
             static uint32_t lastTsc;
             static const int keyMs = 150;
-            if (XTHAL_GET_CCOUNT() - lastTsc > 240 * 1000 * keyMs) {
+            EVERYN_TICKS(240 * 1000 * keyMs) {
                 lastTsc = XTHAL_GET_CCOUNT();
                 if (simulatedKeysAvailable && simulatedKeypressQueue.size() > 0) { 
                     uint8_t c = simulatedKeypressQueue[0];
@@ -900,8 +898,7 @@ void IRAM_ATTR core0Loop() {
                 handlePbiRequest(&pbiRequest[1]);
             }
         }
-        if (XTHAL_GET_CCOUNT() - startTsc > 240 * 1000000) { // XXSECOND
-            startTsc = XTHAL_GET_CCOUNT();
+        EVERYN_TICKS(240 * 1000000) { // XXSECOND
             elapsedSec++;
      
             //if (elapsedSec == 30) raiseInterrupt();
@@ -981,9 +978,6 @@ void threadFunc(void *) {
         _xt_intexc_hooks[XCHAL_NMILEVEL] = my_nmi; 
         //__asm__ __volatile__("rsil %0, 1" : "=r"(oldint) : );
     }
-    int lastCycleCount = 0;
-    int fakeRamErrCount = opt.forceMemTest ? 2 : 0;
-    uint8_t lastRamValue = 0;
 
     core0Loop();
     disableBus();

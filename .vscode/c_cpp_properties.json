@@ -4,7 +4,8 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/home/jim/src/arduino-esp32/tools/esp32-arduino-libs/esp32s3/include/**"
+                "/home/jim/src/arduino-esp32/tools/esp32-arduino-libs/esp32s3/include/**",
+                "/home/jim/src/arduino-esp32-singlecore/tools/esp32-arduino-libs/esp32s3/qio_opi/include/**"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
