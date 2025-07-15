@@ -10,3 +10,11 @@ spiff
 build
 esp*.mk
 Vagrantfile
+*.o65
+littlefs
+*.atr
+*.hex
+stash
+*~
+joust.h
+*.BAK
